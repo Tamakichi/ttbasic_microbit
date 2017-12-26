@@ -1,16 +1,6 @@
 //
-// 豊四季Tiny BASIC for Arduino STM32 構築コンフィグレーション
-// 作成日 2017/06/22 たま吉さん
-//
-// 修正日 2017/07/29 NTSC利用有無指定の追加
-// 修正日 2017/08/06 Wireライブラリ新旧対応
-// 修正日 2017/08/23 設定の整合性チェック＆補正対応
-// 修正日 2017/10/09 コンパイル条件追加、補足説明の追加
-// 修正日 2017/10/09 NTSC_SCMODE追加
-// 修正日 2017/11/08 RTC_CLOCK_SRC追加,OLD_RTC_LIB指定追加（RTClock仕様変更対応）
-// 修正日 2017/11/10 DEV_SCMODE,DEV_IFMODE,MAX_SCMODE,DEV_RTMODE追加（内部処理用)
-// 修正日 2017/11/10 platform.local.txtに-DSTM32_R20170323定義がある場合、
-//                   OLD_RTC_LIB、OLD_WIRE_LIBより優先して安定版利用と判断してコンパイル
+// 豊四季Tiny BASIC for micro:bit 構築コンフィグレーション
+// 作成日 2017/12/25 Arduino STM32版 V0.85βからの移植
 //
 
 #ifndef __ttconfig_h__

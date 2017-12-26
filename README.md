@@ -1,4 +1,4 @@
-# 豊四季Tiny Basic for micro:bit V0.01
+# 豊四季Tiny Basic for micro:bit V0.02
 
 「豊四季Tiny Basic for micro:bit」は、オリジナル版「TOYOSHIKI Tiny BASIC for Arduino」を
 Arduino micro:bit向けに移植・機能拡張したプログラムです。
@@ -28,6 +28,8 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
   - **CHR$()**、**HEX$()**、**BIN$()**、**ASC()**、**INKEY()** 関数の追加    - **TICK()** 関数追加  
   - **?**：**PRINT**文の省略系を追加
   - **AND**、**OR**、!、~、!の追加
+  - **GPIO**、**OUT**、**IN()**、**ANA()**：GPIO利用コマンドの追加
+  - **SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加
 - 文法の変更  
   - 定数の16進数表記対応(例 $1234,$AB)
   - 命令文区切りを';'から':'に変更  
@@ -90,26 +92,69 @@ TeraTermを利用して、プログラムをコピー＆ペーストして取り
 **利用可能キー**
 
 - カーソル移動 カーソルキー
-
 - [Delete]、[CTRL-X] ：カーソル位置の文字削除  
-
 - [BackSpace]：カーソル前の文字削除と前に移動
-
 - [PageUP]、[PageDown]、[CTRL-R]：画面の再表示  
-
 - [HOME]、[END]：行内でカーソルを左端、右端に移動  
-
 - [INS]：挿入・上書きのトグル切り替え
-
 - [Enter]：行入力確定
-
 - [ESC]2回押し、[CTRL-C]：実行プログラムの中断
-
 - [CTRL-L]、[F1]：画面のクリア
-
 - [CTRL-R]、[F5]：画面再表示
 
+
+
+## ピン割り付け・ピン指定
+
+- ピン： **PN0 ～ PN32**  で指定、または **0 ～ 32**で指定する
+
+- ピンモード指定コマンド ：**GPIO** *ピン*,  OUTPUT|INPUT_PU|INPUT_PD|INPUT_FL"  
+
+- デジタル出力：**OUT** ピン, HIGH|LOW|0|1
+
+- デジタル入力：変数=**IN**(ピン)
+
+- アナログ入力：変数=**ANA**(ピン)
+
   ​
+
+## サンプルプログラム
+
+### 画面に色付き文字表示
+
+```
+10 FOR I=0 TO 10
+20 FOR J=0 TO 10
+30 COLOR RND(8): ? "*";
+35 WAIT 100
+40 NEXT J
+50 ?
+60 NEXT I
+```
+
+### ボード上のLEDの点滅
+
+```
+1 'Lﾁｶ
+10 GPIO 3,OUTPUT
+20 OUT 3,LOW
+30 GPIO 26,OUTPUT
+35 "@loop"
+40 OUT 26,HIGH
+50 WAIT 300
+60 OUT 26,LOW
+70 WAIT 300
+80 GOTO "@loop"
+```
+
+### アナログ値表示
+
+```
+10 CLS
+20 A=ANA(PN0)
+30 LOCATE 5,5:?A;"    "
+40 GOTO 20
+```
 
 ## 以降はオリジナルのドキュメントです
 

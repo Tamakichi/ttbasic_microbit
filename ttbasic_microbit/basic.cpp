@@ -8,6 +8,7 @@
 //
 // 2017/12/25 豊四季Tiny BASIC for Arduino micro:bit V0.01 ターミナルバージョン
 //            (Arduino STM32 v0.85βからの移植)  
+// 2017/12/26 V0.02 フラッシュメモリへのプログラム保存対応、デジタル入出力、アナログ入力対応
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -16,13 +17,13 @@
 #include <stdlib.h>
 //#include <wirish.h>
 #include "ttconfig.h"     // コンパイル定義
-#include "ttbasic_types.h"
-#include "tscreenBase.h"  // コンソール基本
-#include "tTermscreen.h"  // シリアルコンソール
+#include "src/lib/ttbasic_types.h"
+#include "src/lib/tscreenBase.h"  // コンソール基本
+#include "src/lib/tTermscreen.h"  // シリアルコンソール
 //#include "sound.h"        // サウンド再生(Timer4 PWM端子 PB9を利用）
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.01"
+#define STR_VARSION "Edition V0.02"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
 #define SIZE_LINE 128    // コマンドライン入力バッファサイズ + NULL
@@ -35,7 +36,7 @@
 #define SIZE_MEM  1024   // 自由利用データ領域
 
 // SRAMの物理サイズ(バイト)
-#define SRAM_SIZE      20480 // STM32F103C8T6
+#define SRAM_SIZE      16384
 
 // 入出力キャラクターデバイス
 #define CDEV_SCREEN   0  // メインスクリーン
@@ -120,25 +121,22 @@ tTermscreen sc1;   // ターミナルスクリーン
 #endif
 #endif
 // *** SDカード管理 *****************
-#if 0
-#include "sdfiles.h"
+//#include "src/lib/sdfiles.h"
+#define SD_PATH_LEN 64      // ディレクトリパス長
+#define SD_TEXT_LEN 255     // テキスト１行最大長さ
 #if USE_SD_CARD == 1
 sdfiles fs;
 #endif 
-#endif
+
 // *** フラッシュメモリ管理 ***********
-#if 0
-#include <tFlashMan.h>
-#endif
-#define FLASH_PAGE_NUM         128     // 全ページ数
-//#define FLASH_PAGE_SIZE        1024    // ページ内バイト数
+#include "tFlashMan.h"
+#define FLASH_PAGE_NUM         256     // 全ページ数
+#define FLASH_PAGE_SIZE        1024    // ページ内バイト数
 #define FLASH_PAGE_PAR_PRG     4       // 1プログラム当たりの利用ページ数
 #define FLASH_SAVE_NUM         8       // プログラム保存可能数
 
 // フラッシュメモリ管理オブジェクト(プログラム保存、システム環境設定を管理）
-#if 0
 tFlashMan FlashMan(FLASH_PAGE_NUM,FLASH_PAGE_SIZE, FLASH_SAVE_NUM, FLASH_PAGE_PAR_PRG); 
-#endif
 
 // システム環境設定値
 SystemConfig CONFIG;
@@ -189,11 +187,9 @@ void error(uint8_t flgCmd);
 // **** GPIOピンに関する定義 **********
 
 // GPIOピンモードの設定
-#if 0
-const WiringPinMode pinType[] = {
-  OUTPUT_OPEN_DRAIN, OUTPUT, INPUT_PULLUP, INPUT_PULLDOWN, INPUT_ANALOG, INPUT, PWM,
+const uint32_t pinType[] = {
+  OUTPUT, INPUT_PULLUP, INPUT_PULLDOWN,  INPUT,
 };
-#endif
 
 #define FNC_IN_OUT  1  // デジタルIN/OUT
 #define FNC_PWM     2  // PWM
@@ -206,24 +202,24 @@ const WiringPinMode pinType[] = {
 // ピン機能チェックテーブル
 #if USE_TFT == 1 || (USE_OLED == 1 && OLED_IFMODE == 1) // TFT/OLED(SPI) 利用専用環境
 const uint8_t pinFunc[]  = {
-  5,5,5,5,5,5,7,7,3,3,  //  0 -  9: PA0,PA1,PA2,PA3,PA4,PA5,PA6,PA7,PA8,PA9,
-  3,0,0,1,1,1,7,7,1,1,  // 10 - 19: PA10,PA11,PA12,PA13,PA14,PA15,PB0,PB1,PB2,PB3, 
-  0,0,0,0,1,0,1,0,0,0,  // 20 - 29: PB4,PB5,PB6,PB7,PB8,PB9,PB10,PB11,PB12,PB13,
-  0,0,1,0,0,            // 30 - 34: PB14,PB15,PC13,PC14,PC15,
+  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
+  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
+  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
+  0,0,0,                // 30 - 32: PN30,PN31,PN32
 };
 #elif USE_NTSC == 1  // NTSC利用環境
 const uint8_t pinFunc[]  = {
-  5,0,5,5,5,5,7,7,3,3,  //  0 -  9: PA0,PA1,PA2,PA3,PA4,PA5,PA6,PA7,PA8,PA9,
-  3,0,0,1,1,1,7,7,1,1,  // 10 - 19: PA10,PA11,PA12,PA13,PA14,PA15,PB0,PB1,PB2,PB3, 
-  0,0,0,0,1,0,1,1,1,1,  // 20 - 29: PB4,PB5,PB6,PB7,PB8,PB9,PB10,PB11,PB12,PB13,
-  1,0,1,0,0,            // 30 - 34: PB14,PB15,PC13,PC14,PC15,
+  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
+  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
+  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
+  0,0,0,                // 30 - 32: PN30,PN31,PN32
 };
 #else // ターミナルコンソールのみ利用環境 または OLED(I2C)
 const uint8_t pinFunc[] = {
- 5,5,5,5,5,5,7,7,3,3,   //  0 -  9: PA0,PA1,PA2,PA3,PA4,PA5,PA6,PA7,PA8,PA9, (変更) PA1...5
- 3,0,0,1,1,1,7,7,1,1,   // 10 - 19: PA10,PA11,PA12,PA13,PA14,PA15,PB0,PB1,PB2,PB3, 
- 1,1,0,0,1,1,1,1,1,1,   // 20 - 29: PB4,PB5,PB6,PB7,PB8,PB9,PB10,PB11,PB12,PB13, (変更) PB4,5,9...1
- 1,1,1,0,0,             // 30 - 34: PB14,PB15,PC13,PC14,PC15,　(変更) PB15...1
+  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
+  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
+  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
+  0,0,0,                // 30 - 32: PN30,PN31,PN32
 };
 #endif
 
@@ -303,18 +299,27 @@ const char *kwtbl[] = {
  "I2CW", "I2CR", "IN", "ANA", "SHIFTIN",
  "SREADY", "SREAD", "EEPREAD",
  "PSET","LINE","RECT","CIRCLE", "BITMAP", "GPRINT", "GSCROLL",  // グラフィック表示コマンド(7)
- "GPIO", "OUT", "POUT", "SHIFTOUT", "PULSEIN",                  // GPIO・入出力関連コマンド(4)
+
+ // GPIO・入出力関連コマンド(4)
+ "GPIO", "OUT", "POUT", "SHIFTOUT", "PULSEIN",                  
+
  "SMODE", "SOPEN", "SCLOSE", "SPRINT", "SWRITE",                // シリアル通信関連コマンド(5)
  "LDBMP","MKDIR","RMDIR",/*"RENAME",*/ "FCOPY","CAT", "DWBMP", "REMOVE", // SDカード関連コマンド
  "HIGH", "LOW", "ON", "OFF",  // 定数
- "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7", "PA8", "PA9",
- "PA10","PA11", "PA12", "PA13","PA14","PA15",
- "PB0", "PB1", "PB2", "PB3", "PB4", "PB5", "PB6", "PB7", "PB8", "PB9",
- "PB10","PB11", "PB12", "PB13","PB14","PB15", "PC13", "PC14","PC15", 
+
+ //ピンの定義
+ "PN0", "PN1", "PN2", "PN3", "PN4", "PN5", "PN6", "PN7", "PN8", "PN9",
+ "PN10","PN11", "PN12", "PN13","PN14","PN15", "PN16", "PN17", "PN18", "PN19", 
+ "PN20","PN21", "PN22", "PN23","PN24","PN25", "PN26", "PN27", "PN28", "PN29", 
+ "PN30","PN31", "PN32",
+ 
  "CW", "CH","GW","GH", "LSB", "MSB",
  "MEM", "VRAM", "VAR", "ARRAY","PRG","FNT","GRAM",
  "UP", "DOWN", "RIGHT", "LEFT",
- "OUTPUT_OD", "OUTPUT", "INPUT_PU", "INPUT_PD", "ANALOG", "INPUT_FL", "PWM",
+ 
+ // ピンモードの定義
+ "OUTPUT", "INPUT_PU", "INPUT_PD", "INPUT_FL",
+ 
  "TONE", "NOTONE",                         // サウンドコマンド(2)
  "DATE", "GETDATE", "GETTIME", "SETDATE",  // RTC関連コマンド(4)
  "EEPFORMAT", "EEPWRITE",                  // 仮想EEPROM関連コマンド(2)
@@ -342,19 +347,28 @@ enum ICode:uint8_t {
  I_I2CW, I_I2CR, I_DIN, I_ANA, I_SHIFTIN,
  I_SREADY, I_SREAD, I_EEPREAD,
  I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP, I_GPRINT, I_GSCROLL, // グラフィック表示コマンド(7)
+ 
+ // GPIO・入出力関連コマンド(4)
  I_GPIO, I_DOUT, I_POUT, I_SHIFTOUT, I_PULSEIN,                   // GPIO・入出力関連コマンド(4)
+ 
  I_SMODE, I_SOPEN, I_SCLOSE, I_SPRINT, I_SWRITE,                  // シリアル通信関連コマンド(5)
  I_LDBMP, I_MKDIR, I_RMDIR, /*I_RENAME,*/ I_FCOPY, I_CAT, I_DWBMP, I_REMOVE,  // SDカード関連コマンド
  I_HIGH, I_LOW, I_ON, I_OFF,// 定数
- I_PA0, I_PA1, I_PA2, I_PA3, I_PA4, I_PA5, I_PA6, I_PA7, I_PA8, I_PA9,
- I_PA10, I_PA11, I_PA12, I_PA13,I_PA14,I_PA15,
- I_PB0, I_PB1, I_PB2, I_PB3, I_PB4, I_PB5, I_PB6, I_PB7, I_PB8, I_PB9, 
- I_PB10,  I_PB11, I_PB12, I_PB13,I_PB14,I_PB15, I_PC13, I_PC14,I_PC15,
+
+//ピンの定義
+ I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
+ I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
+ I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
+ I_PN30,I_PN31, I_PN32,
+
  I_CW, I_CH, I_GW, I_GH,
  I_LSB, I_MSB, 
  I_MEM, I_VRAM, I_MVAR, I_MARRAY,I_MPRG,I_MFNT,I_GRAM,
  I_UP, I_DOWN, I_RIGHT, I_LEFT,
- I_OUTPUT_OPEN_DRAIN, I_OUTPUT, I_INPUT_PULLUP, I_INPUT_PULLDOWN, I_INPUT_ANALOG, I_INPUT_F,  I_PWM,  
+
+ // ピンモードの定義
+ I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
+ 
  I_TONE, I_NOTONE,                          // サウンドコマンド(2)
  I_DATE, I_GETDATE, I_GETTIME, I_SETDATE,   // RTC関連コマンド(4)
  I_EEPFORMAT, I_EEPWRITE,                   // 仮想EEPROM関連コマンド(2)
@@ -380,13 +394,20 @@ const uint8_t i_nsa[] = {
   I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_LSHIFT, I_RSHIFT, I_OR, I_AND,
   I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LNOT, I_BITREV, I_XOR,
   I_ARRAY, I_RND, I_ABS, I_FREE, I_TICK, I_PEEK, I_I2CW, I_I2CR,
-  I_OUTPUT_OPEN_DRAIN, I_OUTPUT, I_INPUT_PULLUP, I_INPUT_PULLDOWN, I_INPUT_ANALOG, I_INPUT_F, I_PWM,
+  
+
+  // ピンモードの定義
+  I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
+
   I_DIN, I_ANA, I_SHIFTIN, I_PULSEIN, I_MAP, I_DMP,
-  I_PA0, I_PA1, I_PA2, I_PA3, I_PA4, I_PA5, I_PA6, I_PA7, I_PA8, 
-  I_PA9, I_PA10, I_PA11, I_PA12, I_PA13,I_PA14,I_PA15,
-  I_PB0, I_PB1, I_PB2, I_PB3, I_PB4, I_PB5, I_PB6, I_PB7, I_PB8, 
-  I_PB9, I_PB10, I_PB11, I_PB12, I_PB13,I_PB14,I_PB15,
-  I_PC13, I_PC14,I_PC15,
+
+  //ピンの定義
+//ピンの定義
+ I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
+ I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
+ I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
+ I_PN30,I_PN31, I_PN32,
+
   I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_EEPREAD, I_MPRG, I_MFNT,I_GRAM,
   I_SREAD, I_SREADY, I_GPEEK, I_GINP,I_RGB,
 };
@@ -424,7 +445,7 @@ inline char sstyle(uint8_t code,
 
 // エラーメッセージ定義
 uint8_t err;// Error message index
-#include "ttbasic_error.h"
+#include "src/lib/ttbasic_error.h"
   
 // RAM mapping
 char lbuf[SIZE_LINE];          // コマンド入力バッファ
@@ -433,7 +454,8 @@ int16_t tbuf_pos = 0;
 unsigned char ibuf[SIZE_IBUF];    // i-code conversion buffer
 short var[SIZE_VAR];              // 変数領域
 short arr[SIZE_ARRY];             // 配列領域
-unsigned char listbuf[SIZE_LIST]; // プログラムリスト領域
+uint32_t listbuf32[SIZE_LIST/4];  // プログラムリスト領域(バウンダリ調整）
+uint8_t* listbuf=(uint8_t*)listbuf32;  // プログラムリスト領域へのポインタ
 uint8_t mem[SIZE_MEM];            // 自由利用データ領域
 
 unsigned char* clp;               // Pointer current line
@@ -1734,7 +1756,6 @@ void isaveconfig() {
 
 // プログラム保存 SAVE 保存領域番号|"ファイル名"
 void isave() {
-#if 0
 	int16_t prgno = 0;
   int16_t ascii = 1;
   uint32_t flash_adr[FLASH_PAGE_PAR_PRG];
@@ -1781,16 +1802,12 @@ void isave() {
 #endif
   } else {
     // 内部フラッシュメモリへの保存
-#if 0
 	FlashMan.saveProgram(prgno, listbuf);
-#endif
   }
-#endif
 }
 
 // フラッシュメモリ上のプログラム消去 ERASE[プログラム番号[,プログラム番号]
 void ierase() {
-#if 0
   int16_t  s_prgno, e_prgno;
   uint32_t flash_adr;
 
@@ -1804,7 +1821,6 @@ void ierase() {
   for (uint8_t prgno = s_prgno; prgno <= e_prgno; prgno++) {
 	  FlashMan.eraseProgram(prgno);
   }
-#endif
 }
 
 // テキスト形式のプログラムのロード
@@ -1860,7 +1876,6 @@ uint8_t loadPrgText(char* fname, uint8_t newmode = 0) {
 //  1:異常終了
 
 uint8_t loadPrg(uint16_t prgno, uint8_t newmode=0) {
-#if 0
   if (!FlashMan.isExistPrg(prgno)) {
     err = ERR_NOPRG;
     return 1;
@@ -1869,7 +1884,6 @@ uint8_t loadPrg(uint16_t prgno, uint8_t newmode=0) {
   // 現在のプログラムの削除とロード
   inew(newmode);
   FlashMan.loadProgram(prgno, listbuf);
-#endif
   return 0;
 }
 
@@ -1926,7 +1940,6 @@ void idelete() {
 
 // プログラムファイル一覧表示 FILES ["ファイルパス"]
 void ifiles() {
-#if 0
   uint32_t flash_adr;
   uint8_t* save_clp;
   char* fname;
@@ -2016,7 +2029,6 @@ void ifiles() {
     newline();
   }
   clp = save_clp;
-#endif
 }
 
 // 画面クリア
@@ -2133,74 +2145,15 @@ int16_t ivpeek() {
   return value;
 }
 
-// ピンモード設定(タイマー操作回避版)
-//  この関数は、ArduinoSTM3 2R20170323のpinMode()不具合修正バージョンです。
-//  最新のバージョンでは対応されています。
-#if 0
-void Fixed_pinMode(uint8_t pin, WiringPinMode mode) {
-	gpio_pin_mode outputMode;
-    bool pwm = false;
-
-    if (pin >= BOARD_NR_GPIO_PINS) {
-        return;
-    }
-
-    switch(mode) {
-    case OUTPUT:
-        outputMode = GPIO_OUTPUT_PP;
-        break;
-    case OUTPUT_OPEN_DRAIN:
-        outputMode = GPIO_OUTPUT_OD;
-        break;
-    case INPUT:
-    case INPUT_FLOATING:
-        outputMode = GPIO_INPUT_FLOATING;
-        break;
-    case INPUT_ANALOG:
-        outputMode = GPIO_INPUT_ANALOG;
-        break;
-    case INPUT_PULLUP:
-        outputMode = GPIO_INPUT_PU;
-        break;
-    case INPUT_PULLDOWN:
-        outputMode = GPIO_INPUT_PD;
-        break;
-    case PWM:
-        outputMode = GPIO_AF_OUTPUT_PP;
-        pwm = true;
-        break;
-    case PWM_OPEN_DRAIN:
-        outputMode = GPIO_AF_OUTPUT_OD;
-        pwm = true;
-        break;
-    default:
-        return;
-    }    
-    gpio_set_mode(PIN_MAP[pin].gpio_device, PIN_MAP[pin].gpio_bit, outputMode);
-   
-    if (PIN_MAP[pin].timer_device != NULL) {
-        if ( pwm ) { // we're switching into PWM, enable timer channels
-        timer_set_mode(PIN_MAP[pin].timer_device,
-                       PIN_MAP[pin].timer_channel,
-                       TIMER_PWM );
-        } else {  // disable channel output in non pwm-Mode             
-            timer_cc_disable(PIN_MAP[pin].timer_device, 
-                            PIN_MAP[pin].timer_channel); 
-        }
-    }
-}
-#endif
-
 // GPIO ピン機能設定
 void igpio() {
-#if 0
-  int16_t pinno;       // ピン番号
-  WiringPinMode pmode; // 入出力モード
+  int16_t pinno;  // ピン番号
+  uint32_t pmode; // 入出力モード
 
   // 入出力ピンの指定
-  if ( getParam(pinno, 0, I_PC15-I_PA0, true) ) return; // ピン番号取得
-  pmode = (WiringPinMode)iexp();  if(err) return ;      // 入出力モードの取得
-
+  if ( getParam(pinno, 0, I_PN32-I_PN0, true) ) return; // ピン番号取得
+  pmode = iexp();  if(err) return ; // 入出力モードの取得
+#if 0
   // ピンモードの設定
   if (pmode == PWM) {
     // PWMピンとして利用可能かチェック
@@ -2208,8 +2161,7 @@ void igpio() {
       err = ERR_GPIO;
       return;    
     }
-   
-    Fixed_pinMode(pinno, pmode);
+    pinMode(pinno, pmode);
     pwmWrite(pinno,0);
   } else if (pmode == INPUT_ANALOG ) {
     // アナログ入力として利用可能かチェック
@@ -2217,24 +2169,23 @@ void igpio() {
       err = ERR_GPIO;
       return;    
     }    
-    Fixed_pinMode(pinno, pmode);
+    pinMode(pinno, pmode);
   } else {
+#endif
     // デジタル入出力として利用可能かチェック
     if (!IsIO_PIN(pinno)) {
       err = ERR_GPIO;
       return;    
     }    
-    Fixed_pinMode(pinno, pmode);    
-  }
-#endif
+    pinMode(pinno, pmode);    
+//  }
 }
 
 // GPIO ピンデジタル出力
 void idwrite() {
-#if 0
   int16_t pinno,  data;
 
-  if ( getParam(pinno, 0, I_PC15-I_PA0, true) ) return; // ピン番号取得
+  if ( getParam(pinno, 0, I_PN32-I_PN0, true) ) return; // ピン番号取得
   if ( getParam(data, false) ) return;                  // データ指定取得
   data = data ? HIGH: LOW;
 
@@ -2245,7 +2196,6 @@ void idwrite() {
   
   // ピンモードの設定
   digitalWrite(pinno, data);
-#endif
 }
 
 //
@@ -2291,7 +2241,7 @@ void ipwm() {
   int16_t duty;       // デューティー値 0～4095
   int16_t freq = 490; // 周波数
 
-  if ( getParam(pinno, 0, I_PC15-I_PA0, true) ) return;  // ピン番号取得
+  if ( getParam(pinno, 0, I_PN32-I_PN0, true) ) return;  // ピン番号取得
   if ( getParam(duty,  0, 4095, false) ) return;         // デューティー値
 
   if (*cip == I_COMMA) {
@@ -2316,8 +2266,8 @@ void ishiftOut() {
   int16_t bitOrder;
   int16_t data;
 
-  if (getParam(dataPin, 0,I_PC15-I_PA0, true)) return;
-  if (getParam(clockPin,0,I_PC15-I_PA0, true)) return;
+  if (getParam(dataPin, 0,I_PN32-I_PN0, true)) return;
+  if (getParam(clockPin,0,I_PN32-I_PN0, true)) return;
   if (getParam(bitOrder,0,1, true)) return;
   if (getParam(data, 0,255,false)) return;
 
@@ -2565,15 +2515,14 @@ uint8_t _shiftIn( uint8_t ulDataPin, uint8_t ulClockPin, uint8_t ulBitOrder, uin
   
 // SHIFTIN関数 SHIFTIN(データピン, クロックピン, オーダ[,ロジック])
 int16_t ishiftIn() {
-#if 0
   int16_t rc;
   int16_t dataPin, clockPin;
   int16_t bitOrder;
   int16_t lgc = HIGH;
 
   if (checkOpen()) return 0;
-  if (getParam(dataPin, 0,I_PC15-I_PA0, true)) return 0;
-  if (getParam(clockPin,0,I_PC15-I_PA0, true)) return 0;
+  if (getParam(dataPin, 0,I_PN32-I_PN0, true)) return 0;
+  if (getParam(clockPin,0,I_PN32-I_PN0, true)) return 0;
   if (getParam(bitOrder,0,1, false)) return 0;
   if (*cip == I_COMMA) {
     cip++;
@@ -2582,12 +2531,10 @@ int16_t ishiftIn() {
   if (checkClose()) return 0;
   rc = _shiftIn((uint8_t)dataPin, (uint8_t)clockPin, (uint8_t)bitOrder, lgc);
   return rc;
-#endif
 }
 
 // PULSEIN関数 PULSEIN(ピン, 検出モード, タイムアウト時間[,単位指定])
 int16_t ipulseIn() {
-#if 0
   int32_t rc=0;
   int16_t dataPin;       // ピン
   int16_t mode;          // 検出モード
@@ -2596,7 +2543,7 @@ int16_t ipulseIn() {
 
   // コマンドライン引数の取得
   if (checkOpen()) return 0;                              // '('のチェック
-  if (getParam(dataPin, 0,I_PC15-I_PA0, true)) return 0;  // ピン
+  if (getParam(dataPin, 0,I_PN32-I_PN0, true)) return 0;  // ピン
   if (getParam(mode, LOW, HIGH, true)) return 0;          // 検出モード
   if (getParam(tmout,0,32767, false)) return 0;           // タイムアウト時間(ミリ秒)
   if (*cip == I_COMMA) {
@@ -2609,7 +2556,6 @@ int16_t ipulseIn() {
   if (rc > 32767) rc = -1; // オーバーフロー時は-1を返す
   
   return rc;
-#endif
 }
   
   
@@ -3446,7 +3392,6 @@ void igprint() {
 }
 
 // ファイル名引数の取得
-#if 0
 char* getParamFname() {
   cleartbuf(); // メモリバッファのクリア
   iprint(3,1);
@@ -3459,7 +3404,7 @@ char* getParamFname() {
   }
   return tbuf;
 }
-#endif
+
 // LDBMP "ファイル名" ,アドレス, X, Y, W, H [,Mode]
 void ildbmp() {
 #if 0
@@ -4063,7 +4008,6 @@ void iconsole(uint8_t useParam=false, uint8_t paramArg=CON_MODE_DEVICE) {
 //  1:正常 0:異常
 //
 uint8_t ilrun() {
-#if 0
   int16_t prgno, lineno = -1;
   uint8_t *lp;
   //char fname[SD_PATH_LEN];  // ファイル名
@@ -4220,7 +4164,6 @@ uint8_t ilrun() {
     }
   }
   return 1;
-#endif
 }
 
 // エラーメッセージ出力
@@ -4405,22 +4348,21 @@ int16_t ivalue() {
   
   case I_DIN: // DIN(ピン番号)
     if (checkOpen()) break;
-    if (getParam(value,0,I_PC15 - I_PA0, false)) break;
+    if (getParam(value,0,I_PN32-I_PN0, false)) break;
     if (checkClose()) break;
     if ( !IsIO_PIN(value) ) {
       err = ERR_GPIO;
       break;
     }
-    //value = digitalRead(value);  // 入力値取得
+    value = digitalRead(value);  // 入力値取得
     value = 0;
     break;
 
   case I_ANA: // ANA(ピン番号)
     if (checkOpen()) break;
-    if (getParam(value,0,I_PC15 - I_PA0, false)) break;
+    if (getParam(value,0,I_PN32-I_PN0, false)) break;
     if (checkClose()) break;
-    //value = analogRead(value);    // 入力値取得
-    value = 0;
+    value = analogRead(value);    // 入力値取得
     break;
 
   case I_EEPREAD: // EEPREAD(アドレス)の場合
@@ -4458,15 +4400,13 @@ int16_t ivalue() {
   default: //以上のいずれにも該当しなかった場合
     // 定数ピン番号
     cip--;
-    if (*cip >= I_PA0 && *cip <= I_PC15) {
-      value = *cip - I_PA0; 
+    if (*cip >= I_PN0 && *cip <= I_PN32) {
+      value = *cip - I_PN0; 
       cip++;
       return value;
     // 定数GPIOモード
-    } else  if (*cip >= I_OUTPUT_OPEN_DRAIN && *cip <= I_PWM) {
-#if 0
-      value = pinType[*cip - I_OUTPUT_OPEN_DRAIN]; 
-#endif
+    } else  if (*cip >= I_OUTPUT && *cip <= I_INPUT_FL) {
+      value = pinType[*cip - I_OUTPUT]; 
       cip++;
       return value;  
     }
@@ -5052,7 +4992,7 @@ unsigned char* iexe() {
 
     default:
      cip--;
-     if (*cip >= I_PA0 && *cip <= I_PC15) {
+     if (*cip >= I_PN0 && *cip <= I_PN32) {
        igpio();
        break; 
      } 
