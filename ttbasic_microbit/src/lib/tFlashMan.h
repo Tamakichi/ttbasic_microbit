@@ -10,7 +10,7 @@
 //#include <TFlash.h>
 //#include <EEPROM.h>
 
-#include "src/lib/ttbasic_types.h"
+#include "ttbasic_types.h"
 
 // *** システム設定関連 **************
 /*

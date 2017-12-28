@@ -3,8 +3,8 @@
 // 2017/12/26 by たま吉さん Arduino STM32版 V0.85βからの移植
 //
 
-#include "src/lib/flash.h"
-#include "src/lib/ttbasic_error.h"
+#include "flash.h"
+#include "ttbasic_error.h"
 #include "tFlashMan.h"
 #define FLASH_START_ADDRESS    ((uint32_t)(0x0000000))   // micro:bit フラッシュメモリ先頭アドレス
 #define FLATH_EEPROM_USE       0                         // 仮想EEPROM利用ページ数

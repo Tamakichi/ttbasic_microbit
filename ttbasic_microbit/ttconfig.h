@@ -8,6 +8,9 @@
 
 #define __FLASH__
 
+// (0) micro:bit LEDマトリックス
+#define USE_MATRIX  1 //  0:利用しない 1:利用する (デフォルト:1)
+
 // ** (1)デフォルトスクリーンモード 0:シリアルターミナル 1:NTSC・OLED・TFTデバイススクリーン
 #define USE_SCREEN_MODE 0  // ※デバイススクリーン利用の場合、1を指定する (デフォルト:1)
 

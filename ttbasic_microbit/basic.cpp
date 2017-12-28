@@ -23,7 +23,7 @@
 //#include "sound.h"        // サウンド再生(Timer4 PWM端子 PB9を利用）
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.02"
+#define STR_VARSION "Edition V0.03"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
 #define SIZE_LINE 128    // コマンドライン入力バッファサイズ + NULL
@@ -92,6 +92,9 @@ tTermscreen sc1;   // ターミナルスクリーン
 #elif USE_OLED == 1
   #include "tOLEDScreen.h"
   tOLEDScreen sc2;
+#elif USE_MATRIX == 1
+  #include "src/lib/tMatrixScreen.h"
+  tMatrixScreen sc2;
 #endif
 
 #define KEY_ENTER 13
@@ -129,7 +132,7 @@ sdfiles fs;
 #endif 
 
 // *** フラッシュメモリ管理 ***********
-#include "tFlashMan.h"
+#include "src/lib/tFlashMan.h"
 #define FLASH_PAGE_NUM         256     // 全ページ数
 #define FLASH_PAGE_SIZE        1024    // ページ内バイト数
 #define FLASH_PAGE_PAR_PRG     4       // 1プログラム当たりの利用ページ数
@@ -311,7 +314,7 @@ const char *kwtbl[] = {
  "PN0", "PN1", "PN2", "PN3", "PN4", "PN5", "PN6", "PN7", "PN8", "PN9",
  "PN10","PN11", "PN12", "PN13","PN14","PN15", "PN16", "PN17", "PN18", "PN19", 
  "PN20","PN21", "PN22", "PN23","PN24","PN25", "PN26", "PN27", "PN28", "PN29", 
- "PN30","PN31", "PN32",
+ "PN30","PN31", "PN32", "BTNA", "BTNB",
  
  "CW", "CH","GW","GH", "LSB", "MSB",
  "MEM", "VRAM", "VAR", "ARRAY","PRG","FNT","GRAM",
@@ -359,7 +362,7 @@ enum ICode:uint8_t {
  I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
  I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
  I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
- I_PN30,I_PN31, I_PN32,
+ I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
  I_CW, I_CH, I_GW, I_GH,
  I_LSB, I_MSB, 
@@ -406,7 +409,7 @@ const uint8_t i_nsa[] = {
  I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
  I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
  I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
- I_PN30,I_PN31, I_PN32,
+ I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
   I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_EEPREAD, I_MPRG, I_MFNT,I_GRAM,
   I_SREAD, I_SREADY, I_GPEEK, I_GINP,I_RGB,
@@ -2034,7 +2037,7 @@ void ifiles() {
 // 画面クリア
 void icls() {
   int16_t mode = 0;
-#if USE_OLED || USE_TFT
+#if USE_OLED || USE_TFT || USE_MATRIX
   if (*cip != I_EOL && *cip != I_COLON) {
     // 引数あり
     if (getParam(mode,0,1,false)) return; // モードの取得
@@ -2044,7 +2047,7 @@ void icls() {
     sc->cls();
    sc->locate(0,0);
   }
-#if USE_OLED || USE_TFT
+#if USE_OLED || USE_TFT || USE_MATRIX
   else if (mode == 1) {
     sc2.cls();
   }
@@ -2873,15 +2876,15 @@ int16_t ieepread(uint16_t adr) {
 
 // ドットの描画 PSET X,Y,C
 void ipset() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1
+#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
  int16_t x,y,c;
- if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
+ if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
     if (getParam(x,true)||getParam(y,true)||getParam(c,false)) 
     if (x < 0) x =0;
     if (y < 0) y =0;
     if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
     if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1
+  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
     if (c < 0 || c > 2) c = 1;
   #endif
     sc2.pset(x,y,c);
@@ -2895,9 +2898,9 @@ void ipset() {
 
 // 直線の描画 LINE X1,Y1,X2,Y2,C
 void iline() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 
+#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1  || USE_MATRIX == 1
  int16_t x1,x2,y1,y2,c;
-  if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
+  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
     if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,false)) 
     if (x1 < 0) x1 =0;
     if (y1 < 0) y1 =0;
@@ -2907,7 +2910,7 @@ void iline() {
     if (y1 >= sc2.getGHeight()) y1 = sc2.getGHeight()-1;
     if (x2 >= sc2.getGWidth())  x2 = sc2.getGWidth()-1;
     if (y2 >= sc2.getGHeight()) y2 = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1
+  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
     if (c < 0 || c > 2) c = 1;
   #endif
     sc2.line(x1, y1, x2, y2, c);
@@ -2921,15 +2924,15 @@ void iline() {
 
 // 円の描画 CIRCLE X,Y,R,C,F
 void icircle() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1
+#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1|| USE_MATRIX == 1
   int16_t x,y,r,c,f;
-  if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
+  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
     if (getParam(x,true)||getParam(y,true)||getParam(r,true)||getParam(c,true)||getParam(f,false)) 
     if (x < 0) x =0;
     if (y < 0) y =0;
     if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
     if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1
+  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
     if (c < 0 || c > 2) c = 1;
   #endif
     if (r < 0) r = 1;
@@ -2944,16 +2947,16 @@ void icircle() {
 
 // 四角の描画 RECT X1,Y1,X2,Y2,C,F
 void irect() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1
+#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
   int16_t x1,y1,x2,y2,c,f;
-  if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
+  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
     if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,true)||getParam(f,false)) 
       return;
     if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight())  {
       err = ERR_VALUE;
       return;      
     }
-  #if USE_NTSC == 1 || USE_OLED == 1
+  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
     if (c < 0 || c > 2) c = 1;
   #endif
     sc2.rect(x1, y1, x2-x1+1, y2-y1+1, c, f);
@@ -2967,12 +2970,12 @@ void irect() {
 
 // ビットマップの描画 BITMAP 横座標, 縦座標, アドレス, インデックス, 幅, 高さ [,倍率]
 void ibitmap() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1
+#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
   int16_t  x,y,w,h,d = 1,rgb = 0;
   int16_t  index;
   int16_t  vadr;
   uint8_t* adr;
-  if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
+  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
     if (getParam(x,true)||getParam(y,true)||getParam(vadr,true)||getParam(index,true)||getParam(w,true)||getParam(h,false)) 
       return;
     if (*cip == I_COMMA) {
@@ -4355,7 +4358,6 @@ int16_t ivalue() {
       break;
     }
     value = digitalRead(value);  // 入力値取得
-    value = 0;
     break;
 
   case I_ANA: // ANA(ピン番号)
@@ -4397,6 +4399,8 @@ int16_t ivalue() {
   case I_RIGHT: value = 2   ; break;
   case I_LEFT:  value = 3   ; break;
 
+   case I_BTNA: value = 5   ; break;
+   case I_BTNB: value = 11   ; break;
   default: //以上のいずれにも該当しなかった場合
     // 定数ピン番号
     cip--;
@@ -5072,6 +5076,10 @@ void basic() {
   workarea = (uint8_t*)malloc(1920); // SCREEN0で80x24まで
 #endif
 
+#if USE_MATRIX == 1
+ sc2.begin();
+#endif
+
   // デバイススクリーンの初期化設定
 #if USE_SCREEN_MODE== 0 // シリアルコンソール利用
   sc = &sc1;
@@ -5118,21 +5126,25 @@ void basic() {
   err = 0;
   error();                         // 「OK」またはエラーメッセージを表示してエラー番号をクリア
   sc->show_curs(1);                // カーソル表示
-#if 0    
+    
+  // ボタンA,Bはデジタル入力モードに初期化済とする
+  pinMode(5,INPUT);
+  pinMode(11,INPUT);
+
   // プログラム自動起動
-  if (CONFIG.STARTPRG >=0  && loadPrg(CONFIG.STARTPRG) == 0) {
+  if (digitalRead(5) ==0 && loadPrg(0) == 0) {
     // ロードに成功したら、プログラムを実行する
     sc->show_curs(0);        // カーソル非表示
     irun();                  // RUN命令を実行
 
     // 起動したプログラムの情報を表示
     newline();               // 改行
-    c_puts("Autorun No."); 
-    putnum(CONFIG.STARTPRG,0);c_puts(" done.");
-    newline();
+    //c_puts("Autorun No."); 
+    //putnum(CONFIG.STARTPRG,0);c_puts(" done.");
+    //newline();
     err = 0; 
   }
-#endif
+
   // 端末から1行を入力して実行（メインループ）
   sc->show_curs(1);
   while (1) { //無限ループ

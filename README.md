@@ -1,4 +1,4 @@
-# 豊四季Tiny Basic for micro:bit V0.02
+# 豊四季Tiny Basic for micro:bit V0.03
 
 「豊四季Tiny Basic for micro:bit」は、オリジナル版「TOYOSHIKI Tiny BASIC for Arduino」を  
 Arduino micro:bit向けに移植・機能拡張したプログラムです。  
@@ -18,18 +18,42 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
   ターミナル上で昔のBASICっぽい編集操作を出来るようにしました.  
 - コマンドの追加  
   - **RENUM** ：行番号再割り当て  
+
   - **CLS** ：画面クリア  
+
   - **LOCATE**：カーソル移動  
+
   - **COLOR**： 文字色の指定  
+
   - **ATTR**：文字装飾の指定  
-  - **WAIT**：時間待ち  
+
+  - **WAIT** n：時間待ち(マイクロ秒)  
+
   - **VPEEK**：スクリーン位置の文字コード参照  
+
   - **CHR$()**、**HEX$()**、**BIN$()**、**ASC()**、**INKEY()** 関数の追加  
-    -**TICK()** 関数追加  
+
+  - **TICK()** 関数追加  
+
   - **?**：**PRINT**文の省略系を追加  
+
   - **AND**、**OR**、!、~、!の追加  
+
   - **GPIO**、**OUT**、**IN()**、**ANA()**：GPIO利用コマンドの追加  
-  - **SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加  
+
+  - **FILES**、**SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加  
+
+  - LEDマトリックスの描画コマンド追加
+
+    - **PSET** x,y,c
+
+    - **LINE** x1,y1,x2,y2,c
+
+    - **RECT** x1,y1,w,h,c,mode
+
+    - **CIRCLE** x,y,r,c,mode
+
+      ​
 - 文法の変更  
   - 定数の16進数表記対応(例 $1234,$AB)  
   - 命令文区切りを';'から':'に変更  
@@ -53,6 +77,11 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 
 本プログラムは下記のライブラリを利用しています。  
 - mcursesライブラリ　<https://github.com/ChrisMicro/mcurses>  
+- Adafruit_microbit_Matrix (Adafruit_Microbit libraryを流用し改造) 
+  https://github.com/adafruit/Adafruit_Microbit   
+
+別途、Adafruit GFX libraryのインストールが必要です。  
+
 
 
 ## 利用方法
@@ -136,6 +165,33 @@ TeraTermを利用して、プログラムをコピー＆ペーストして取り
 30 LOCATE 5,5:?A;"    "
 40 GOTO 20
 ```
+
+### ボタン入力判定
+
+```
+10 CLS
+20 IF !IN(BTNA) ?"Button A"
+30 IF !IN(BTNB) ?"Button B"
+40 WAIT 200
+50 GOTO 20
+```
+
+### LEDマトリックス ドット表示
+
+```
+10 CLS 1
+20 D=1
+30 FOR Y=0 TO 4
+40 FOR X=0 TO 4
+50 PSET X,Y,D
+60 WAIT 100
+70 NEXT X
+80 NEXT Y
+90 IF D D=0 ELSE D=1
+100 GOTO 30
+```
+
+
 
 ## 以降はオリジナルのドキュメントです
 
