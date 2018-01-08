@@ -2,28 +2,29 @@
  TOYOSHIKI Tiny BASIC for Arduino
  (C)2012 Tetsuya Suzuki
  GNU General Public License
-   2017/12/25, Modified by Tamakichi、for Arduino STM32
+   2017/12/25, Modified by Tamakichi、for Arduino micro:bit
  */
 
 //
 // 2017/12/25 豊四季Tiny BASIC for Arduino micro:bit V0.01 ターミナルバージョン
 //            (Arduino STM32 v0.85βからの移植)  
 // 2017/12/26 V0.02 フラッシュメモリへのプログラム保存対応、デジタル入出力、アナログ入力対応
+// 2017/12/28 V0.03 LEDマトリックス制御機能の追加
+// 2018/01/07 V0.04 LEDマトリックスのスクロール、文字表示、加速度センサー、リセット時プログラム起動対応
 
 #include <Arduino.h>
 #include <stdint.h>
 #include <string.h>
-//#include <unistd.h>
 #include <stdlib.h>
-//#include <wirish.h>
-#include "ttconfig.h"     // コンパイル定義
-#include "src/lib/ttbasic_types.h"
-#include "src/lib/tscreenBase.h"  // コンソール基本
-#include "src/lib/tTermscreen.h"  // シリアルコンソール
-//#include "sound.h"        // サウンド再生(Timer4 PWM端子 PB9を利用）
+
+#include "ttconfig.h"               // コンパイル定義
+#include "src/lib/ttbasic_types.h"  // 定数定義
+#include "src/lib/tscreenBase.h"    // コンソール基本クラス
+#include "src/lib/tTermscreen.h"    // シリアルコンソールクラス
+//#include "sound.h"                // サウンド再生(Timer4 PWM端子 PB9を利用）
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.03"
+#define STR_VARSION "Edition V0.04"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
 #define SIZE_LINE 128    // コマンドライン入力バッファサイズ + NULL
@@ -40,10 +41,11 @@
 
 // 入出力キャラクターデバイス
 #define CDEV_SCREEN   0  // メインスクリーン
-#define CDEV_SERIAL   1  // シリアル
+//#define CDEV_SERIAL   1  // シリアル
 #define CDEV_GSCREEN  2  // グラフィック
 #define CDEV_MEMORY   3  // メモリー
 #define CDEV_SDFILES  4  // ファイル
+#define CDEV_MSG      5  // LEDメッセージ
 
 // *** フォント参照 ***************
 const uint8_t* ttbasic_font = DEVICE_FONT;
@@ -56,17 +58,6 @@ inline uint8_t* getFontAdr() { return (uint8_t*)ttbasic_font;};
 #define CON_MODE_SERIAL    1        // コンソールモード シリアル
 #define SCSIZE_MODE_SERIAL 0        // スクリーンサイズモード指定なし（シリアルコンソールモード）
 uint8_t* workarea = NULL;           // 画面用動的獲得メモリ
-uint8_t  scmode = USE_SCREEN_MODE;  // コンソール画面(0:シリアル画面、1:デバイス画面)
-uint8_t  prv_scmode = scmode;       // 直前のコンソール画面
-uint8_t  serialMode = DEF_SMODE;    // シリアルモード(0:USB、1:USART)
-uint8_t  scSizeMode = 1;            // スクリーンサイズモード(0:シリアルターミナル,1:ノーマル,2～ 拡大表示)
-uint8_t  prv_scSizeMode = 1;        // 直前のスクリーンサイズモード(0:シリアルターミナル,1:ノーマル,2～ 拡大表示)
-uint8_t  scrt = 0;                  // 画面向き
-uint8_t  prv_scrt = 0;              // 直前の画面向き
-uint32_t defbaud = GPIO_S1_BAUD;    // シリアルボーレート
-
-//#define delay(t) HAL_Delay(t)
-//#define millis() HAL_GetTick()
 
 char c_isalpha(char c) {
   return ((c <= 'z' && c >= 'a') || (c <= 'Z' && c >= 'A'));
@@ -76,23 +67,14 @@ char c_isdigit(char c) {
 }
 
 char isHexadecimalDigit(char c) {
-  return ((c <= 'a' && c >= 'f') || (c <= 'A' && c >= 'F') || (c <= '0' && c >= '9'));
+  return ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9'));
 }
 
 void initScreenEnv();
 tscreenBase* sc;   // 利用デバイススクリーン用ポインタ
 tTermscreen sc1;   // ターミナルスクリーン
 
-#if USE_NTSC == 1
-  #include "tTVscreen.h"
-  tTVscreen   sc2;
-#elif USE_TFT == 1
-  #include "tTFTScreen.h"
-  tTFTScreen  sc2;
-#elif USE_OLED == 1
-  #include "tOLEDScreen.h"
-  tOLEDScreen sc2;
-#elif USE_MATRIX == 1
+#if USE_MATRIX == 1
   #include "src/lib/tMatrixScreen.h"
   tMatrixScreen sc2;
 #endif
@@ -100,36 +82,8 @@ tTermscreen sc1;   // ターミナルスクリーン
 #define KEY_ENTER 13
 
 // **** I2Cライブラリの利用設定 ****
-#if 0
-#if OLD_WIRE_LIB == 1 || defined(STM32_R20170323)
-  // Wireライブラリ変更前の場合
-  #if I2C_USE_HWIRE == 0
-    #include <Wire.h>
-    #define I2C_WIRE  Wire
-  #else
-    #include <HardWire.h>
-    HardWire HWire(1, I2C_FAST_MODE); // I2C1を利用
-    #define I2C_WIRE  HWire
-  #endif
-#else 
-  // Wireライブラリ変更ありの場合
-  #if I2C_USE_HWIRE == 0
-    #include <SoftWire.h>
-    TwoWire SWire(SCL, SDA, SOFT_STANDARD);
-    #define I2C_WIRE  SWire
-  #else
-    #include <Wire.h>
-    #define I2C_WIRE  Wire
-  #endif
-#endif
-#endif
-// *** SDカード管理 *****************
-//#include "src/lib/sdfiles.h"
-#define SD_PATH_LEN 64      // ディレクトリパス長
-#define SD_TEXT_LEN 255     // テキスト１行最大長さ
-#if USE_SD_CARD == 1
-sdfiles fs;
-#endif 
+  #include <Wire.h>
+  #define I2C_WIRE  Wire
 
 // *** フラッシュメモリ管理 ***********
 #include "src/lib/tFlashMan.h"
@@ -141,9 +95,6 @@ sdfiles fs;
 // フラッシュメモリ管理オブジェクト(プログラム保存、システム環境設定を管理）
 tFlashMan FlashMan(FLASH_PAGE_NUM,FLASH_PAGE_SIZE, FLASH_SAVE_NUM, FLASH_PAGE_PAR_PRG); 
 
-// システム環境設定値
-SystemConfig CONFIG;
-  
 // プロトタイプ宣言
 char* getParamFname();
 int16_t getNextLineNo(int16_t lineno);
@@ -152,6 +103,10 @@ void mem_putch(uint8_t c);
 unsigned char* iexe();
 short iexp(void);
 void error(uint8_t flgCmd);
+
+// *** 加速度センサー MMA8653用宣言 ***
+#include "MMA8653.h"
+MMA8653 accel;
 
 // **** RTC用宣言 ********************
 #if 0
@@ -202,29 +157,13 @@ const uint32_t pinType[] = {
 #define IsADC_PIN(N) IsUseablePin(N,FNC_ANALOG)   // 指定ピンADC利用可能判定
 #define IsIO_PIN(N)  IsUseablePin(N,FNC_IN_OUT)   // 指定ピンデジタル入出力利用可能判定
 
-// ピン機能チェックテーブル
-#if USE_TFT == 1 || (USE_OLED == 1 && OLED_IFMODE == 1) // TFT/OLED(SPI) 利用専用環境
-const uint8_t pinFunc[]  = {
-  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
-  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
-  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
-  0,0,0,                // 30 - 32: PN30,PN31,PN32
-};
-#elif USE_NTSC == 1  // NTSC利用環境
-const uint8_t pinFunc[]  = {
-  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
-  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
-  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
-  0,0,0,                // 30 - 32: PN30,PN31,PN32
-};
-#else // ターミナルコンソールのみ利用環境 または OLED(I2C)
+// ピン機能チェックテーブル ターミナルコンソールのみ利用環境
 const uint8_t pinFunc[] = {
   5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
   5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
   1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
   0,0,0,                // 30 - 32: PN30,PN31,PN32
 };
-#endif
 
 // ピン利用可能チェック
 inline uint8_t IsUseablePin(uint8_t pinno, uint8_t fnc) {
@@ -241,18 +180,14 @@ inline uint8_t IsUseablePin(uint8_t pinno, uint8_t fnc) {
 inline void c_putch(uint8_t c, uint8_t devno = CDEV_SCREEN) {
   if (devno == CDEV_SCREEN )
     sc->putch(c); // メインスクリーンへの文字出力
-  else if (devno == CDEV_SERIAL)
-   sc->Serial_write(c); // シリアルへの文字列出力
-#if USE_NTSC == 1 || USE_TFT ==1 || USE_OLED == 1
-  else if (devno == CDEV_GSCREEN )
+#if USE_MATRIX == 1
+  else if (devno == CDEV_GSCREEN)
     sc2.gputch(c); // グラフィック画面へのグラフィック文字出力
 #endif
   else if (devno == CDEV_MEMORY)
    mem_putch(c); // メモリーへの文字列出力
-#if USE_SD_CARD == 1
-  else if (devno == CDEV_SDFILES )
-    fs.putch(c); // ファイルへの文字列出力
-#endif
+  else if (devno == CDEV_MSG)
+   sc2.scrollIn(c);
 } 
 
 //  改行
@@ -260,30 +195,17 @@ inline void c_putch(uint8_t c, uint8_t devno = CDEV_SCREEN) {
 inline void newline(uint8_t devno=CDEV_SCREEN) {
  if (devno== CDEV_SCREEN )
    sc->newLine();        // メインスクリーンへの文字出力
-  else if (devno == CDEV_SERIAL )
-   sc->Serial_newLine(); // シリアルへの文字列出力
-#if USE_NTSC == 1
-  else if (devno == CDEV_GSCREEN )
-    ((tTVscreen*)sc)->gputch('\n'); // グラフィック画面へのグラフィック文字出力
-#endif
   else if (devno == CDEV_MEMORY )
     mem_putch('\n'); // メモリーへの文字列出力
-#if USE_SD_CARD == 1
-  else if (devno == CDEV_SDFILES ) {
-    fs.putch('\x0d'); // ファイルへの文字列出力
-    fs.putch('\x0a'); 
-  }
-#endif
 }
-
+/*
 // tick用支援関数
 void iclt() {
   //systick_uptime_millis = 0;
 }
-
+*/
 // 乱数
 short getrnd(short value) {
-  //return random(value);
   return rand() % value +1;
 }
 
@@ -291,23 +213,21 @@ short getrnd(short value) {
 //const char *kwtbl[] __FLASH__  = {
 const char *kwtbl[] = {
  "GOTO", "GOSUB", "RETURN", "FOR", "TO", "STEP", "NEXT", "IF", "END", "ELSE",       // 制御命令(10)
- ",", ";", ":", "\'","-", "+", "*", "/", "%", "(", ")", "$", "<<", ">>", "|", "&",  // 演算子・記号(29)
+ ",", ";", ":", "\'","-", "+", "*", "/", "%", "(", ")", "$", "<<", ">>", "|", "&",  // 演算子・記号(30)
  ">=", "#", ">", "=", "<=", "!=", "<>","<", "AND", "OR", "!", "~", "^", "@",     
- "CLT", "WAIT",  // 時間待ち・時間計測コマンド(2)
+ /*"CLT", */ "WAIT",  // 時間待ち・時間計測コマンド(2)
  "POKE",         // 記憶領域操作コマンド(1)
  "PRINT", "?", "INPUT", "CLS", "COLOR", "ATTR" ,"LOCATE", "REDRAW", "CSCROLL", // キャラクタ表示コマンド(9)
  "CHR$", "BIN$", "HEX$", "DMP$", "STR$",               // 文字列関数(5)
- "ABS", "MAP", "ASC", "FREE", "RND",  "INKEY", "LEN",  // 数値関数(20)
- "TICK", "PEEK", "VPEEK", "GPEEK", "GINP", "RGB",
- "I2CW", "I2CR", "IN", "ANA", "SHIFTIN",
- "SREADY", "SREAD", "EEPREAD",
- "PSET","LINE","RECT","CIRCLE", "BITMAP", "GPRINT", "GSCROLL",  // グラフィック表示コマンド(7)
+ "ABS", "MAP", "ASC", "FREE", "RND",  "INKEY", "LEN",  // 数値関数(19)
+ "TICK", "PEEK", "VPEEK", "GPEEK", "GINP",
+ "I2CW", "I2CR", "IN", "ANA", "SHIFTIN","MATRIX",
 
- // GPIO・入出力関連コマンド(4)
+ "PSET","LINE","RECT","CIRCLE", "BITMAP", "GPRINT", "GSCROLL","MSG",  // グラフィック表示コマンド(8)
+
+ // GPIO・入出力関連コマンド(5)
  "GPIO", "OUT", "POUT", "SHIFTOUT", "PULSEIN",                  
 
- "SMODE", "SOPEN", "SCLOSE", "SPRINT", "SWRITE",                // シリアル通信関連コマンド(5)
- "LDBMP","MKDIR","RMDIR",/*"RENAME",*/ "FCOPY","CAT", "DWBMP", "REMOVE", // SDカード関連コマンド
  "HIGH", "LOW", "ON", "OFF",  // 定数
 
  //ピンの定義
@@ -318,17 +238,17 @@ const char *kwtbl[] = {
  
  "CW", "CH","GW","GH", "LSB", "MSB",
  "MEM", "VRAM", "VAR", "ARRAY","PRG","FNT","GRAM",
- "UP", "DOWN", "RIGHT", "LEFT",
+ "UP", "DOWN", "RIGHT", "LEFT","TOP",
  
  // ピンモードの定義
  "OUTPUT", "INPUT_PU", "INPUT_PD", "INPUT_FL",
  
  "TONE", "NOTONE",                         // サウンドコマンド(2)
  "DATE", "GETDATE", "GETTIME", "SETDATE",  // RTC関連コマンド(4)
- "EEPFORMAT", "EEPWRITE",                  // 仮想EEPROM関連コマンド(2)
- "LOAD", "SAVE", "BLOAD", "BSAVE", "LIST", "NEW", "REM", "LET", "CLV",  // プログラム関連 コマンド(16)
- "LRUN", "FILES","EXPORT", "CONFIG", "SAVECONFIG", "ERASE", "SYSINFO",
- "SCREEN", "WIDTH", "CONSOLE", // 表示切替
+ "LOAD", "SAVE", "LIST", "NEW", "REM", "LET", "CLV",  // プログラム関連 コマンド(16)
+ "LRUN", "FILES","EXPORT", "ERASE", "SYSINFO",
+ "WIDTH", // 表示切替
+ "ACCEL", // 加速度センサー値取得
  "RENUM", "RUN", "DELETE", "OK",           // システムコマンド(4)
 };
 
@@ -337,50 +257,48 @@ const char *kwtbl[] = {
 
 // i-code(Intermediate code) assignment
 enum ICode:uint8_t { 
- I_GOTO, I_GOSUB, I_RETURN, I_FOR, I_TO, I_STEP, I_NEXT, I_IF, I_END, I_ELSE,   // 制御命令(10)
- I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR,  // 演算子・記号(28)
- I_LSHIFT, I_RSHIFT, I_OR, I_AND, I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LAND, I_LOR, I_LNOT,
- I_BITREV, I_XOR,  I_ARRAY, 
- I_CLT, I_WAIT,  // 時間待ち・時間計測コマンド(2)
- I_POKE,         // 記憶領域操作コマンド(1)
- I_PRINT, I_QUEST, I_INPUT, I_CLS, I_COLOR, I_ATTR, I_LOCATE,  I_REFLESH, I_CSCROLL,  // キャラクタ表示コマンド(9)
- I_CHR, I_BIN, I_HEX, I_DMP, I_STRREF,   // 文字列関数(5)
- I_ABS, I_MAP, I_ASC, I_FREE, I_RND, I_INKEY, I_LEN,   // 数値関数(20)
- I_TICK, I_PEEK, I_VPEEK, I_GPEEK, I_GINP, I_RGB,
- I_I2CW, I_I2CR, I_DIN, I_ANA, I_SHIFTIN,
- I_SREADY, I_SREAD, I_EEPREAD,
- I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP, I_GPRINT, I_GSCROLL, // グラフィック表示コマンド(7)
+  I_GOTO, I_GOSUB, I_RETURN, I_FOR, I_TO, I_STEP, I_NEXT, I_IF, I_END, I_ELSE,                          // 制御命令(10)
+  I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR,  // 演算子・記号(30)
+  I_LSHIFT, I_RSHIFT, I_OR, I_AND, I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LAND, I_LOR, I_LNOT,
+  I_BITREV, I_XOR,  I_ARRAY, 
+  /*I_CLT,*/ I_WAIT,  // 時間待ち・時間計測コマンド(2)
+  I_POKE,         // 記憶領域操作コマンド(1)
+  I_PRINT, I_QUEST, I_INPUT, I_CLS, I_COLOR, I_ATTR, I_LOCATE,  I_REFLESH, I_CSCROLL,  // キャラクタ表示コマンド(9)
+  I_CHR, I_BIN, I_HEX, I_DMP, I_STRREF,   // 文字列関数(5)
+  I_ABS, I_MAP, I_ASC, I_FREE, I_RND, I_INKEY, I_LEN,   // 数値関数(19)
+  I_TICK, I_PEEK, I_VPEEK, I_GPEEK, I_GINP,
+  I_I2CW, I_I2CR, I_DIN, I_ANA, I_SHIFTIN, I_MATRIX,
  
- // GPIO・入出力関連コマンド(4)
- I_GPIO, I_DOUT, I_POUT, I_SHIFTOUT, I_PULSEIN,                   // GPIO・入出力関連コマンド(4)
+  I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP, I_GPRINT, I_GSCROLL, I_MSG, // グラフィック表示コマンド(8)
  
- I_SMODE, I_SOPEN, I_SCLOSE, I_SPRINT, I_SWRITE,                  // シリアル通信関連コマンド(5)
- I_LDBMP, I_MKDIR, I_RMDIR, /*I_RENAME,*/ I_FCOPY, I_CAT, I_DWBMP, I_REMOVE,  // SDカード関連コマンド
- I_HIGH, I_LOW, I_ON, I_OFF,// 定数
+  // GPIO・入出力関連コマンド(4)
+  I_GPIO, I_DOUT, I_POUT, I_SHIFTOUT, I_PULSEIN,                   // GPIO・入出力関連コマンド(5)
 
-//ピンの定義
- I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
- I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
- I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
- I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
+  I_HIGH, I_LOW, I_ON, I_OFF,// 定数
 
- I_CW, I_CH, I_GW, I_GH,
- I_LSB, I_MSB, 
- I_MEM, I_VRAM, I_MVAR, I_MARRAY,I_MPRG,I_MFNT,I_GRAM,
- I_UP, I_DOWN, I_RIGHT, I_LEFT,
+  //ピンの定義
+  I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
+  I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
+  I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
+  I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
- // ピンモードの定義
- I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
+  I_CW, I_CH, I_GW, I_GH,
+  I_LSB, I_MSB, 
+  I_MEM, I_VRAM, I_MVAR, I_MARRAY,I_MPRG,I_MFNT,I_GRAM,
+  I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
+
+  // ピンモードの定義
+  I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
  
- I_TONE, I_NOTONE,                          // サウンドコマンド(2)
- I_DATE, I_GETDATE, I_GETTIME, I_SETDATE,   // RTC関連コマンド(4)
- I_EEPFORMAT, I_EEPWRITE,                   // 仮想EEPROM関連コマンド(2)
- I_LOAD, I_SAVE, I_BLOAD, I_BSAVE, I_LIST, I_NEW, I_REM, I_LET, I_CLV,  // プログラム関連 コマンド(16)
- I_LRUN, I_FILES, I_EXPORT, I_CONFIG, I_SAVECONFIG, I_ERASE, I_INFO,
- I_SCREEN, I_WIDTH, I_CONSOLE, // 表示切替
+  I_TONE, I_NOTONE,                          // サウンドコマンド(2)
+  I_DATE, I_GETDATE, I_GETTIME, I_SETDATE,   // RTC関連コマンド(4)
+  I_LOAD, I_SAVE, I_LIST, I_NEW, I_REM, I_LET, I_CLV,  // プログラム関連 コマンド(16)
+  I_LRUN, I_FILES, I_EXPORT, I_ERASE, I_INFO,
+  I_WIDTH, // 表示切替
+  I_ACCEL, // 加速度センサー値取得
   I_RENUM, I_RUN, I_DELETE, I_OK,  // システムコマンド(4)
 
-// 内部利用コード
+  // 内部利用コード
   I_NUM, I_STR, I_HEXNUM, I_VAR,
   I_EOL, 
 };
@@ -389,30 +307,28 @@ enum ICode:uint8_t {
 // 後ろに空白を入れない中間コード
 const uint8_t i_nsa[] = {
   I_RETURN, I_END, 
-  I_CLT,
+  /*I_CLT,*/
   I_HIGH, I_LOW,  I_ON, I_OFF,I_CW, I_CH, I_GW, I_GH, 
-  I_UP, I_DOWN, I_RIGHT, I_LEFT,
+  I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
   I_INKEY,I_VPEEK, I_CHR, I_ASC, I_HEX, I_BIN,I_LEN, I_STRREF,
   I_COMMA, I_SEMI, I_COLON, I_SQUOT,I_QUEST,
   I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_LSHIFT, I_RSHIFT, I_OR, I_AND,
   I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LNOT, I_BITREV, I_XOR,
   I_ARRAY, I_RND, I_ABS, I_FREE, I_TICK, I_PEEK, I_I2CW, I_I2CR,
-  
 
   // ピンモードの定義
   I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
 
   I_DIN, I_ANA, I_SHIFTIN, I_PULSEIN, I_MAP, I_DMP,
 
-  //ピンの定義
-//ピンの定義
- I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
- I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
- I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
- I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
+ //ピンの定義
+  I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
+  I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
+  I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
+  I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
-  I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_EEPREAD, I_MPRG, I_MFNT,I_GRAM,
-  I_SREAD, I_SREADY, I_GPEEK, I_GINP,I_RGB,
+  I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_MPRG, I_MFNT,I_GRAM,
+  I_GPEEK, I_GINP,
 };
 
 // 前が定数か変数のとき前の空白をなくす中間コード
@@ -426,9 +342,9 @@ const uint8_t  i_nsb[] = {
 const uint8_t i_sf[]  = {
   I_ATTR, I_CLS, I_COLOR, I_DATE, I_END, I_FILES, I_TO, I_STEP,I_QUEST,I_LAND, I_LOR,
   I_GETDATE,I_GETTIME,I_GOSUB,I_GOTO,I_GPIO,I_INKEY,I_INPUT,I_LET,I_LIST,I_ELSE,
-  I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM,I_CLT,
-  I_RETURN,I_RUN,I_SAVE,I_SETDATE,I_SHIFTOUT,I_WAIT,I_EEPFORMAT, I_EEPWRITE, 
-  I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP, I_SWRITE, I_SPRINT,  I_SOPEN, I_SCLOSE,I_SMODE,
+  I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM, /*I_CLT,*/
+  I_RETURN,I_RUN,I_SAVE,I_SETDATE,I_SHIFTOUT,I_WAIT,I_MSG,I_MATRIX,
+  I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP,
   I_TONE, I_NOTONE, I_CSCROLL, I_GSCROLL,I_EXPORT,
 };
 
@@ -503,16 +419,13 @@ uint8_t* v2realAddr(uint16_t vadr) {
     radr = vadr - V_MEM_TOP + mem;    
   } else if ((vadr >= V_FNT_TOP) && (vadr < V_GRAM_TOP)) {  // フォント領域
     radr = vadr - V_FNT_TOP + getFontAdr()+3;
-  } else if ((vadr >= V_GRAM_TOP) && (vadr < V_GRAM_TOP+6048)) { // グラフィク表示用メモリ領域
-//    if ( (scmode >= 1) && (scmode <= 3) )
-      if ( scmode ) // 2017/10/27
-#if USE_NTSC == 1 || USE_OLED == 1
-      radr = vadr - V_GRAM_TOP + ((tGraphicScreen*)sc)->getGRAM();
+  } else if ((vadr >= V_GRAM_TOP) && (vadr < V_GRAM_TOP+27)) { // グラフィク表示用メモリ領域
+//      if ( scmode ) // 2017/10/27
+#if USE_MATRIX == 1
+      radr = vadr - V_GRAM_TOP + sc2.getGRAM();
 #else
       radr = NULL;
 #endif
-    else
-      radr = NULL;
   }
   return radr;
 }
@@ -834,12 +747,12 @@ int16_t lookup(char* str, uint16_t len) {
 uint8_t toktoi() {
   int16_t i;
   int16_t key;
-  uint8_t len = 0;  // 中間コードの並びの長さ
+  uint8_t len = 0;        // 中間コードの並びの長さ
   char* ptok;             // ひとつの単語の内部を指すポインタ
   char* s = lbuf;         // 文字列バッファの内部を指すポインタ
   char c;                 // 文字列の括りに使われている文字（「"」または「'」）
-  uint32_t value;            // 定数
-  uint32_t tmp;              // 変換過程の定数
+  uint32_t value;         // 定数
+  uint32_t tmp;           // 変換過程の定数
   uint16_t hex;           // 16進数定数
   uint16_t hcnt;          // 16進数桁数
   uint8_t var_len;        // 変数名長さ
@@ -1563,7 +1476,7 @@ void iexport() {
       if (getParam(e_pno,s_pno,FLASH_SAVE_NUM-1,false)) return;        
     }
   }
-#if 0
+
   for (uint16_t i =s_pno; i <= e_pno;i++) {
     exclp = FlashMan.getPrgAddress(i); // プログラム保存アドレスの取得
     if (!FlashMan.isExistPrg(i)) {
@@ -1590,7 +1503,6 @@ void iexport() {
     c_puts("SAVE "); putnum(i, 0); newline(); // "SAVE XX"の表示
     newline();
   }
-#endif
 }
 
 // プログラム消去
@@ -1710,109 +1622,21 @@ void irenum() {
   }
 }
 
-// CONFIGコマンド
-// CONFIG 項目番号,設定値
-void iconfig() {
-  int16_t itemNo;
-  int16_t value;
-
-  if ( getParam(itemNo, true) ) return;  
-  if ( getParam(value, false) ) return;  
-  switch(itemNo) {
-#if USE_NTSC == 1
-  case 0: // NTSC補正
-    if (value <0 || value >2)  {
-      err = ERR_VALUE;
-    } else {
-      ((tTVscreen*)sc)->adjustNTSC(value);
-      CONFIG.NTSC = value;
-    }
-    break;
-  case 1: // キーボード補正
-    if (value <0 || value >1)  {
-      err = ERR_VALUE;
-    } else {
-      ((tTVscreen*)sc)->reset_kbd(value);
-      CONFIG.KEYBOARD = value;
-    }
-    break;
-#endif
-  case 2: // プログラム自動起動番号設定
-    if (value < -1 || value >FLASH_SAVE_NUM-1)  {
-      err = ERR_VALUE;
-    } else {
-      CONFIG.STARTPRG = value;
-    }
-    break;
-  default:
-    err = ERR_VALUE;
-    break;     
- }
-}
-
-// システム環境設定の保存
-void isaveconfig() {
-#if 0
-  err = FlashMan.saveConfig(CONFIG);  
-#endif
-}
-
 // プログラム保存 SAVE 保存領域番号|"ファイル名"
 void isave() {
 	int16_t prgno = 0;
-  int16_t ascii = 1;
-  uint32_t flash_adr[FLASH_PAGE_PAR_PRG];
-  char* fname;
-  uint8_t mode = 0;
-  int8_t rc;
-  
   if (*cip == I_EOL) {
     prgno = 0;
-  } else 
-  // ファイル名またはプログラム番号の取得
-  if ( *cip == I_STR || *cip == I_STRREF || *cip == I_CHR ||
-       *cip == I_HEX || *cip == I_BIN || *cip == I_DMP
-  ) {
-    if(!(fname = getParamFname())) {
-      return;
-    }  
-    mode = 1;
-    if (*cip == I_COMMA) {
-      cip++;
-      if ( getParam(ascii, 0, 1, false) ) return;       
-    }
-  } else if ( getParam(prgno, 0, FLASH_SAVE_NUM-1, false) ) return;  
-  if (mode == 1) {
-#if USE_SD_CARD == 1
-    // SDカードへの保存
-    if (ascii) {
-      rc = fs.tmpOpen(fname,1);
-      if (rc == SD_ERR_INIT) {
-        err = ERR_SD_NOT_READY;
-        return;
-      } else if (rc == SD_ERR_OPEN_FILE) {
-        err =  ERR_FILE_OPEN;
-        return;
-      }
-      ilist(4);
-      fs.tmpClose();
-    } else {
-      // 通常のバイナリー保存
-      if( fs.save(fname, listbuf, SIZE_LIST) ) {
-        err = ERR_FILE_WRITE;
-      }
-    }
-#endif
-  } else {
-    // 内部フラッシュメモリへの保存
-	FlashMan.saveProgram(prgno, listbuf);
+  } else if ( getParam(prgno, 0, FLASH_SAVE_NUM-1, false) ) {
+    return;  
   }
+  // 内部フラッシュメモリへの保存
+	FlashMan.saveProgram(prgno, listbuf);
 }
 
 // フラッシュメモリ上のプログラム消去 ERASE[プログラム番号[,プログラム番号]
 void ierase() {
   int16_t  s_prgno, e_prgno;
-  uint32_t flash_adr;
 
   if ( getParam(s_prgno, 0, FLASH_SAVE_NUM-1, false) ) return;
   e_prgno = s_prgno;
@@ -1824,50 +1648,6 @@ void ierase() {
   for (uint8_t prgno = s_prgno; prgno <= e_prgno; prgno++) {
 	  FlashMan.eraseProgram(prgno);
   }
-}
-
-// テキスト形式のプログラムのロード
-// 引数
-//   fname  :  ファイル名
-//   newmode:  初期化モード 0:初期化する 1:変数を初期化しない 2:追記モード
-// 戻り値
-//   0:正常終了
-//   1:異常終了
-uint8_t loadPrgText(char* fname, uint8_t newmode = 0) {
-  int16_t rc;
-  int16_t len;
-#if USE_SD_CARD == 1
-  rc = fs.tmpOpen(fname,0);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-    return 1;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err =  ERR_FILE_OPEN;
-    return 1;
-  }
-
-  if (newmode != 2)
-    inew(newmode);
-  while(fs.readLine(lbuf)) {
-     tlimR(lbuf); // 2017/07/31 追記
-     len = toktoi();
-     if (err) {
-       c_puts(lbuf);
-       newline(); 
-       error(false);     
-       continue;
-     }
-     if (*ibuf == I_NUM) {
-        *ibuf = len; 
-        inslist();
-        if (err)
-          error(true);
-        continue; 
-     }
-  }
-  fs.tmpClose();
-#endif
-  return 0;
 }
 
 // フラシュメモリからのプログラムロード
@@ -1945,58 +1725,11 @@ void idelete() {
 void ifiles() {
   uint32_t flash_adr;
   uint8_t* save_clp;
-  char* fname;
-  char wildcard[SD_PATH_LEN];
-  char* wcard = NULL;
+
   char* ptr = NULL;
   uint8_t flgwildcard = 0;
   int16_t StartNo, endNo; // プログラム番号開始、終了
-  int16_t rc;
-
-  // 引数がファイル名（文字列関数、文字列）の場合SDカードの一覧表示
-  if ( *cip == I_STR || *cip == I_STRREF || *cip == I_CHR ||
-       *cip == I_HEX || *cip == I_BIN || *cip == I_DMP
-  ) {
-    if(!(fname = getParamFname())) {
-      return;
-    }  
-
-   for (uint8_t i = 0; i < strlen(fname); i++) {
-      if (fname[i] >='a' && fname[i] <= 'z') {
-         fname[i] = fname[i] - 'a' + 'A';
-      }
-   }
-    
-    if (strlen(fname) > 0) {
-      for (int8_t i = strlen(fname)-1; i >= 0; i--) {
-        if (fname[i] == '/') {
-          ptr = &fname[i];
-          break;
-        }
-        if (fname[i] == '*' || fname[i] == '?' || fname[i] == '.') 
-          flgwildcard = 1;
-      }       
-      if (ptr != NULL && flgwildcard == 1) {
-         strcpy(wildcard, ptr+1);
-         wcard = wildcard;
-         *(ptr+1) = 0;
-      } else if (ptr == NULL && flgwildcard == 1) {
-         strcpy(wildcard, fname);
-         wcard = wildcard;
-         strcpy(fname,"/");
-      }
-    }
-#if USE_SD_CARD == 1
-    rc = fs.flist(fname, wcard, sc->getWidth()/14);
-    if (rc == SD_ERR_INIT) {
-      err = ERR_SD_NOT_READY;
-    } else if (rc == SD_ERR_OPEN_FILE) { 
-      err = ERR_FILE_OPEN;
-    }    
-#endif
-    return;
-  }
-  
+  int16_t rc;  
   // フラッシュメモリのプログラムリスト
   
   // 引数が数値または、無しの場合、フラッシュメモリのリスト表示
@@ -2037,7 +1770,7 @@ void ifiles() {
 // 画面クリア
 void icls() {
   int16_t mode = 0;
-#if USE_OLED || USE_TFT || USE_MATRIX
+#if USE_MATRIX
   if (*cip != I_EOL && *cip != I_COLON) {
     // 引数あり
     if (getParam(mode,0,1,false)) return; // モードの取得
@@ -2047,7 +1780,7 @@ void icls() {
     sc->cls();
    sc->locate(0,0);
   }
-#if USE_OLED || USE_TFT || USE_MATRIX
+#if USE_MATRIX
   else if (mode == 1) {
     sc2.cls();
   }
@@ -2059,6 +1792,13 @@ void iwait() {
   int16_t tm;
   if ( getParam(tm, 0, 32767, false) ) return;
   delay(tm);
+}
+
+// LEDマトリックス駆動のON/OFF
+void imatrix() {
+  int16_t mode;
+  if ( getParam(mode, 0, 1, false) ) return;
+  sc2.driveMatrix(mode); 
 }
 
 // カーソル移動 LOCATE x,y
@@ -2080,19 +1820,11 @@ void ilocate() {
 // 文字色の指定 COLOLR fc,bc
 void icolor() {
  int16_t fc,  bc = 0;
-#if USE_TFT  == 1 || USE_OLED == 1
- if ( getParam(fc,false) ) return;
- if(*cip == I_COMMA) {
-    cip++;
-    if ( getParam(bc,false) ) return;  
- }
-#else
  if ( getParam(fc, 0, 8, false) ) return;
  if(*cip == I_COMMA) {
     cip++;
     if ( getParam(bc, 0, 8, false) ) return;  
  }
-#endif
   // 文字色の設定
   sc->setColor((uint16_t)fc, (uint16_t)bc);  
 }
@@ -2264,7 +1996,6 @@ void ipwm() {
 
 // shiftOutコマンド SHIFTOUT dataPin, clockPin, bitOrder, value
 void ishiftOut() {
-#if 0
   int16_t dataPin, clockPin;
   int16_t bitOrder;
   int16_t data;
@@ -2280,7 +2011,6 @@ void ishiftOut() {
   }
 
   shiftOut(dataPin, clockPin, bitOrder, data);
-#endif
 }
 
 // 16進文字出力 'HEX$(数値,桁数)' or 'HEX$(数値)'
@@ -2426,7 +2156,6 @@ void ipoke() {
 
 // I2CW関数  I2CW(I2Cアドレス, コマンドアドレス, コマンドサイズ, データアドレス, データサイズ)
 int16_t ii2cw() {
-#if 0
   int16_t  i2cAdr, ctop, clen, top, len;
   uint8_t* ptr;
   uint8_t* cptr;
@@ -2457,12 +2186,10 @@ int16_t ii2cw() {
   }
   rc =  I2C_WIRE.endTransmission();
   return rc;
-#endif
 }
 
 // I2CR関数  I2CR(I2Cアドレス, 送信データアドレス, 送信データサイズ,受信データアドレス,受信データサイズ)
 int16_t ii2cr() {
-#if 0
   int16_t  i2cAdr, sdtop, sdlen,rdtop,rdlen;
   uint8_t* sdptr;
   uint8_t* rdptr;
@@ -2499,11 +2226,9 @@ int16_t ii2cr() {
     }
   }  
   return rc;
-#endif
 }
 
 uint8_t _shiftIn( uint8_t ulDataPin, uint8_t ulClockPin, uint8_t ulBitOrder, uint8_t lgc){
-#if 0
   uint8_t value = 0 ;
   uint8_t i ;
   for ( i=0 ; i < 8 ; ++i ) {
@@ -2513,7 +2238,6 @@ uint8_t _shiftIn( uint8_t ulDataPin, uint8_t ulClockPin, uint8_t ulBitOrder, uin
     digitalWrite( ulClockPin, !lgc ) ;
   }
   return value ;
-#endif
 }
   
 // SHIFTIN関数 SHIFTIN(データピン, クロックピン, オーダ[,ロジック])
@@ -2838,59 +2562,17 @@ void idate() {
 #endif
 }
 
-// EEPFORMAT コマンド
-void ieepformat() {
-#if 0
-  err = FlashMan.EEPFormat();
-#endif
-}
-
-// EEPWRITE アドレス,データ コマンド
-void ieepwrite() {
-#if 0
-  int16_t adr;     // 書込みアドレス
-  uint16_t data;   // データ
-
-  if ( getParam(adr, 0, 32767, true) ) return; // アドレス
-  if ( getParam(data, false) ) return;         // データ
-     
-  // データの書込み
-  err = FlashMan.EEPWrite(adr, data);
-#endif
-}
-
-// EEPREAD(アドレス) 関数
-int16_t ieepread(uint16_t adr) {
-#if 0
-  uint16_t data;
-
-  if (adr > 32767) {
-    err = ERR_VALUE;
-    return 0;
- }
- // データの読み込み
- err = FlashMan.EEPRead(adr, &data);
- return data;
-#endif
-}
-
 // ドットの描画 PSET X,Y,C
 void ipset() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
+#if USE_MATRIX == 1
  int16_t x,y,c;
- if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
-    if (getParam(x,true)||getParam(y,true)||getParam(c,false)) 
-    if (x < 0) x =0;
-    if (y < 0) y =0;
-    if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-    if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
-    if (c < 0 || c > 2) c = 1;
-  #endif
-    sc2.pset(x,y,c);
- } else {
-    err = ERR_NOT_SUPPORTED;
- }
+  if (getParam(x,true)||getParam(y,true)||getParam(c,false)) 
+  if (x < 0) x =0;
+  if (y < 0) y =0;
+  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
+  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
+  if (c < 0 || c > 2) c = 1;
+  sc2.pset(x,y,c);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -2898,25 +2580,19 @@ void ipset() {
 
 // 直線の描画 LINE X1,Y1,X2,Y2,C
 void iline() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1  || USE_MATRIX == 1
- int16_t x1,x2,y1,y2,c;
-  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
-    if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,false)) 
-    if (x1 < 0) x1 =0;
-    if (y1 < 0) y1 =0;
-    if (x2 < 0) x1 =0;
-    if (y2 < 0) y1 =0;
-    if (x1 >= sc2.getGWidth())  x1 = sc2.getGWidth()-1;
-    if (y1 >= sc2.getGHeight()) y1 = sc2.getGHeight()-1;
-    if (x2 >= sc2.getGWidth())  x2 = sc2.getGWidth()-1;
-    if (y2 >= sc2.getGHeight()) y2 = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
-    if (c < 0 || c > 2) c = 1;
-  #endif
-    sc2.line(x1, y1, x2, y2, c);
-  } else {
-   err = ERR_NOT_SUPPORTED;
-  }
+#if USE_MATRIX == 1
+  int16_t x1,x2,y1,y2,c;
+  if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,false)) 
+  if (x1 < 0) x1 =0;
+  if (y1 < 0) y1 =0;
+  if (x2 < 0) x1 =0;
+  if (y2 < 0) y1 =0;
+  if (x1 >= sc2.getGWidth())  x1 = sc2.getGWidth()-1;
+  if (y1 >= sc2.getGHeight()) y1 = sc2.getGHeight()-1;
+  if (x2 >= sc2.getGWidth())  x2 = sc2.getGWidth()-1;
+  if (y2 >= sc2.getGHeight()) y2 = sc2.getGHeight()-1;
+  if (c < 0 || c > 2) c = 1;
+  sc2.line(x1, y1, x2, y2, c);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -2924,22 +2600,16 @@ void iline() {
 
 // 円の描画 CIRCLE X,Y,R,C,F
 void icircle() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1|| USE_MATRIX == 1
+#if USE_MATRIX == 1
   int16_t x,y,r,c,f;
-  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
-    if (getParam(x,true)||getParam(y,true)||getParam(r,true)||getParam(c,true)||getParam(f,false)) 
-    if (x < 0) x =0;
-    if (y < 0) y =0;
-    if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-    if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
-  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
-    if (c < 0 || c > 2) c = 1;
-  #endif
-    if (r < 0) r = 1;
+  if (getParam(x,true)||getParam(y,true)||getParam(r,true)||getParam(c,true)||getParam(f,false)) 
+  if (x < 0) x =0;
+  if (y < 0) y =0;
+  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
+  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
+  if (c < 0 || c > 2) c = 1;
+  if (r < 0) r = 1;
     sc2.circle(x, y, r, c, f);
-  } else {
-   err = ERR_NOT_SUPPORTED;
-  }
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -2947,22 +2617,16 @@ void icircle() {
 
 // 四角の描画 RECT X1,Y1,X2,Y2,C,F
 void irect() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
+#if USE_MATRIX == 1
   int16_t x1,y1,x2,y2,c,f;
-  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
-    if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,true)||getParam(f,false)) 
-      return;
-    if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight())  {
-      err = ERR_VALUE;
-      return;      
-    }
-  #if USE_NTSC == 1 || USE_OLED == 1 || USE_MATRIX == 1
-    if (c < 0 || c > 2) c = 1;
-  #endif
-    sc2.rect(x1, y1, x2-x1+1, y2-y1+1, c, f);
-  }else {
-   err = ERR_NOT_SUPPORTED;
+  if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,true)||getParam(f,false)) 
+    return;
+  if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight())  {
+    err = ERR_VALUE;
+    return;      
   }
+  if (c < 0 || c > 2) c = 1;
+  sc2.rect(x1, y1, x2-x1+1, y2-y1+1, c, f);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -2970,63 +2634,37 @@ void irect() {
 
 // ビットマップの描画 BITMAP 横座標, 縦座標, アドレス, インデックス, 幅, 高さ [,倍率]
 void ibitmap() {
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 || USE_MATRIX == 1
+#if USE_MATRIX == 1
   int16_t  x,y,w,h,d = 1,rgb = 0;
   int16_t  index;
   int16_t  vadr;
   uint8_t* adr;
-  if (scmode||USE_TFT||USE_OLED||USE_MATRIX) { // コンソールがデバイスコンソールの場合
-    if (getParam(x,true)||getParam(y,true)||getParam(vadr,true)||getParam(index,true)||getParam(w,true)||getParam(h,false)) 
-      return;
-    if (*cip == I_COMMA) {
-      cip++;
-      if (getParam(d,false)) return;
-    }
-    if (*cip == I_COMMA) {
-      cip++;
-      if (getParam(rgb,0,1,false)) return;
-    }
-
-    adr = v2realAddr(vadr);
-    if (!adr) {
-      err = ERR_RANGE;
-      return;
-    }
-  
-    if (x < 0) x =0;
-    if (y < 0) y =0;
-    if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-    if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
-    if (index < 0) index = 0;
-    if (w < 0) w =1;
-    if (h < 0) h =1; 
-    if (d < 0) d = 1;
-    sc2.bitmap(x, y, (uint8_t*)adr, index, w, h, d, rgb);
-  } else {
-   err = ERR_NOT_SUPPORTED;
+  if (getParam(x,true)||getParam(y,true)||getParam(vadr,true)||getParam(index,true)||getParam(w,true)||getParam(h,false)) 
+    return;
+  if (*cip == I_COMMA) {
+    cip++;
+    if (getParam(d,false)) return;
   }
-#else
-  err = ERR_NOT_SUPPORTED;
-#endif
-}
-
-// キャラクタスクロール CSCROLL X1,Y1,X2,Y2,方向
-// 方向 0: 上, 1: 下, 2: 右, 3: 左
-void  icscroll() {
-#if USE_NTSC == 1 || USE_OLED == 1
-  int16_t  x1,y1,x2,y2,d;
-  if (scmode||USE_OLED) {  // コンソールがデバイスコンソールの場合
-    if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(d,false))
-      return;
-    if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc->getWidth() || y2 >= sc->getHeight())  {
-      err = ERR_VALUE;
-      return;      
-    }
-    if (d < 0 || d > 3) d = 0;
-    sc2.cscroll(x1, y1, x2-x1+1, y2-y1+1, d);
-  } else {
-   err = ERR_NOT_SUPPORTED;
+  if (*cip == I_COMMA) {
+    cip++;
+    if (getParam(rgb,0,1,false)) return;
   }
+
+  adr = v2realAddr(vadr);
+  if (!adr) {
+    err = ERR_RANGE;
+    return;
+  }
+
+  if (x < 0) x =0;
+  if (y < 0) y =0;
+  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
+  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
+  if (index < 0) index = 0;
+  if (w < 0) w =1;
+  if (h < 0) h =1; 
+  if (d < 0) d = 1;
+  sc2.bitmap(x, y, (uint8_t*)adr, index, w, h, d, rgb);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -3034,124 +2672,19 @@ void  icscroll() {
 
 // グラフィックスクロール GSCROLL X1,Y1,X2,Y2,方向
 void igscroll() {
-#if USE_NTSC == 1 || USE_OLED == 1
+#if USE_MATRIX == 1
   int16_t  x1,y1,x2,y2,d;
-  if (scmode||USE_OLED) {  // コンソールがデバイスコンソールの場合
-    if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(d,false))
-      return;
-    if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight()) {
-      err = ERR_VALUE;
-      return;      
-    }
-    if (d < 0 || d > 3) d = 0; 
-    sc2.gscroll(x1,y1,x2-x1+1, y2-y1+1, d);
-  } else {
- err = ERR_NOT_SUPPORTED;
+  if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(d,false))
+    return;
+  if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight()) {
+    err = ERR_VALUE;
+    return;      
   }
+  if (d < 0 || d > 3) d = 0; 
+  sc2.gscroll(x1,y1,x2-x1+1, y2-y1+1, d);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
-}
-
-// シリアル1バイト出力 : SWRITE データ
-void iswrite() {
-  int16_t c; 
-  if ( getParam(c, false) ) return;
-   sc->Serial_write((uint8_t)c);
-}
-
-// シリアルモード設定: SMODE MODE [,"通信速度"]
-// MODE 0                     : USB=コンソール、Serial1=データ通信
-// MODE 1,"通信速度"          : USB=データ通信、Serial1=コンソール
-// MODE 3,制御コード無効/有効 : ポートの機能変更なし
-void ismode() {
-  int16_t c;          // モード
-  int16_t  flg;        // 制御コード有効/無効指定
-  uint16_t ln;        // 通信速度文字数
-  uint32_t baud = 0;  // 通信速度
-
-  // 第1引数の取得
-  if ( getParam(c, 0, 3, false) ) return;  
-  
-  if (c == 1) {
-    // MODE 1 の場合,第2引数を取得する
-    if(*cip != I_COMMA) {
-      err = ERR_SYNTAX;
-      return;      
-    }
-    cip++;
-    if (*cip != I_STR) {
-      err = ERR_VALUE;
-      return;
-    }
-
-    cip++;        //中間コードポインタを次へ進める
-    ln = *cip++;  //文字数を取得
-  
-    // 第2引数の文字列の評価
-    for (uint16_t i=0; i < ln; i++) {
-       if (*cip >='0' && *cip <= '9') {
-          baud = baud*10 + *cip - '0';
-       } else {
-          err = ERR_VALUE;
-          return;
-       }
-       cip++;
-    }
-  }
-  else if (c == 3) {
-    // MODE 3の場合、第2引数を取得する
-    cip++;
-    if ( getParam(flg, 0, 1, false) ) return;
-    // 制御コード処理の設定
-    sc->set_allowCtrl(flg);
-    return;
-  }
-  
-  // モードの設定
-  sc->Serial_mode((uint8_t)c, baud);
-  serialMode =c;
-  defbaud = baud;
-}
-
-// シリアル1クローズ
-void isclose() {
-  delay(500);
-  if(lfgSerial1Opened == true)
-    //Serial1.end();
-   sc->Serial_close();
-  lfgSerial1Opened = false;    
-}
-
-// シリアル1オープン
-void isopen() {
-  uint16_t ln;
-  uint32_t baud = 0;
-
-  if(lfgSerial1Opened) {
-    isclose();
-  }
-
-  if (*cip != I_STR) {
-    err = ERR_VALUE;
-    return;
-  }
-  
-  cip++;        //中間コードポインタを次へ進める
-  ln = *cip++;  //文字数を取得
-
-  // 引数のチェック
-  for (uint16_t i=0; i < ln; i++) {
-     if (*cip >='0' && *cip <= '9') {
-        baud = baud*10 + *cip - '0';
-     } else {
-        err = ERR_VALUE;
-        return;
-     }
-     cip++;
-  }
- sc->Serial_open(baud);
-  lfgSerial1Opened = true;
 }
 
 // TONE 周波数 [,音出し時間]
@@ -3178,18 +2711,13 @@ void inotone() {
 
 // GPEEK(X,Y)関数の処理
 int16_t igpeek() {
-#if USE_NTSC == 1 || USE_OLED == 1
+#if USE_MATRIX == 1
   short x, y;  // 座標
-  if (scmode||USE_OLED) { // コンソールがデバイスコンソールの場合
-    if (checkOpen()) return 0;
-    if ( getParam(x,true) || getParam(y,false) ) return 0; 
-    if (checkClose()) return 0;
-    if (x < 0 || y < 0 || x >= sc2.getGWidth() || y >= sc2.getGHeight()) return 0;
-    return sc2.gpeek(x,y);  
-  } else {
-   err = ERR_NOT_SUPPORTED;
-   return 0;
-  }
+  if (checkOpen()) return 0;
+  if ( getParam(x,true) || getParam(y,false) ) return 0; 
+  if (checkClose()) return 0;
+  if (x < 0 || y < 0 || x >= sc2.getGWidth() || y >= sc2.getGHeight()) return 0;
+  return sc2.gpeek(x,y);  
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -3197,19 +2725,14 @@ int16_t igpeek() {
 
 // GINP(X,Y,H,W,C)関数の処理
 int16_t iginp() {
-#if USE_NTSC == 1 || USE_OLED == 1
+#if USE_MATRIX == 1
   int16_t x,y,w,h,c;
-  if (scmode||USE_OLED) { // コンソールがデバイスコンソールの場合
-    if (checkOpen())  return 0;
-    if ( getParam(x,true)||getParam(y,true)||getParam(w,true)||getParam(h,true)||getParam(c,false) ) return 0; 
-    if (checkClose()) return 0;
-    if (x < 0 || y < 0 || x >= sc2.getGWidth() || y >= sc2.getGHeight() || h < 0 || w < 0) return 0;    
-    if (x+w >= sc2.getGWidth() || y+h >= sc2.getGHeight() ) return 0;     
-    return sc2.ginp(x, y, w, h, c);  
-  } else {
-    err = ERR_NOT_SUPPORTED;
-    return 0;
-  }
+  if (checkOpen())  return 0;
+  if ( getParam(x,true)||getParam(y,true)||getParam(w,true)||getParam(h,true)||getParam(c,false) ) return 0; 
+  if (checkClose()) return 0;
+  if (x < 0 || y < 0 || x >= sc2.getGWidth() || y >= sc2.getGHeight() || h < 0 || w < 0) return 0;    
+  if (x+w >= sc2.getGWidth() || y+h >= sc2.getGHeight() ) return 0;     
+  return sc2.ginp(x, y, w, h, c);  
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
@@ -3269,29 +2792,6 @@ int16_t iasc() {
   return value;
 }
 
-// RGB(r,g,b)関数
-int16_t iRGB() {
-  int16_t color_R,color_G,color_B; // 引数
-  uint16_t rc; // 関数値
-  
-  // 引数の取得
-  if (checkOpen())  return 0;   // '('のチェック
-  if ( getParam(color_R, 0,31, true) ||  // 赤 5ビット
-       getParam(color_G, 0,32, true) ||  // 緑 5ビット
-       getParam(color_B, 0,31, false)    // 青 5ビット
-  ) return 0; 
-  if (checkClose()) return 0; // ')'のチェック
-  
-  // 緑のみ6ビットのため赤・青と同等に扱うため補正を行う
-  if (color_G > 31) {
-    color_G = 63;
-  } else {
-    color_G<<=1;
-  }
-  rc = ((color_R & 0b11111)<<11) | ((color_G & 0b111111) << 5) | (color_B & 0b11111);
-  return (int16_t)rc;
-}    
-
 // PRINT handler
 void iprint(uint8_t devno=0,uint8_t nonewln=0) {
   short value;     //値
@@ -3319,7 +2819,6 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
     case I_CHR: // CHR$()関数
       cip++;
       if (getParam(value, 0,255,false)) break;   // 括弧の値を取得
-//     if (!err)
       c_putch(value, devno);
      break;
 
@@ -3329,8 +2828,7 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
     case I_STRREF:cip++; istrref(devno); break; // STR$()関数
     case I_ELSE:        // ELSE文がある場合は打ち切る
        newline(devno);
-       //return;
-       goto END_PRINT;
+       return;
        break;
        
     default: //以上のいずれにも該当しなかった場合（式とみなす）
@@ -3352,13 +2850,11 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
     }
     if (*cip == I_ELSE) {
         newline(devno); 
-        goto END_PRINT;
-        //return;
+        return;
     } else if (*cip == I_COMMA || *cip == I_SEMI) { // もし',' ';'があったら
       cip++;
       if (*cip == I_COLON || *cip == I_EOL || *cip == I_ELSE) //もし文末なら
-        //return; 
-        goto END_PRINT;
+        return; 
     } else {    //',' ';'がなければ
       if (*cip != I_COLON && *cip != I_EOL) { //もし文末でなければ
         err = ERR_SYNTAX;
@@ -3370,482 +2866,69 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
   if (!nonewln) {
     newline(devno);
   }
-END_PRINT:
-  if (USE_OLED ==1 && devno == 0 && 0 != scSizeMode ) {
-#if USE_OLED == 1
-    ((tOLEDScreen*)sc)->update();
-#endif
-  }
 }
 
 // GPRINT x,y,..
 void igprint() {
-#if USE_NTSC == 1 || USE_TFT ==1 || USE_OLED == 1
+#if USE_MATRIX == 1
   int16_t x,y;
-  if (scmode||USE_TFT||USE_OLED) { // コンソールがデバイスコンソールの場合
-    if ( getParam(x, 0, sc2.getGWidth(), true) )  return;
-    if ( getParam(y, 0, sc2.getGHeight(),true) )  return;
-    sc2.set_gcursor(x,y);    iprint(2);
-  } else {
-    err = ERR_NOT_SUPPORTED;
-  }
+  if ( getParam(x, -32768, 32767, true) )  return;
+  if ( getParam(y, -32768, 32767,true) )  return;
+  sc2.set_gcursor(x,y);    iprint(2);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
 }
 
-// ファイル名引数の取得
-char* getParamFname() {
-  cleartbuf(); // メモリバッファのクリア
-  iprint(3,1);
-  if (strlen(tbuf) >= SD_PATH_LEN)
-      err = ERR_LONGPATH;   
-  if (err) {
-    if (err == ERR_RANGE)
-      err = ERR_LONGPATH;
-      return NULL;
-  }
-  return tbuf;
-}
-
-// LDBMP "ファイル名" ,アドレス, X, Y, W, H [,Mode]
-void ildbmp() {
-#if 0
-  char* fname;
-  int16_t adr;
-  int16_t x =0,y = 0,w = 0, h = 0,mode = 0;
-  uint8_t* ptr;
-  uint8_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-  if (*cip != I_COMMA) {
-    err = ERR_SYNTAX;
-    return;    
-  }
-  cip++;
-  
-  if ( getParam(adr,0, 32767, true) ) return;   // アドレス
-  if ( getParam(x,  0, 32767, true) ) return;   // x
-  if ( getParam(y,  0, 32767, true) ) return;   // y
-  if ( getParam(w,  0, 32767, true) ) return;   // w
-  if ( getParam(h,  0, 32767, false) ) return;  // h
-  if (*cip == I_COMMA) {
-     cip++; 
-     if ( getParam(mode,  0, 1, false) ) return;  // mode 
-  }
-  
-  // 仮想アドレスから実アドレスへの変換
-  ptr = v2realAddr(adr);
-  if (ptr == NULL) {
-    err = ERR_RANGE;
-    return;
-  }
-  // 画像のロード
-#if USE_SD_CARD == 1
-rc = fs.loadBitmap(fname, ptr, x, y, w, h, mode);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err =  ERR_FILE_OPEN;
-  } else if (rc == SD_ERR_READ_FILE) {
-    err =  ERR_FILE_READ;
-  }
-#else
- err = ERR_NOT_SUPPORTED;
-#endif 
-#endif
-}
-
-
-// DWBMP  "ファイル名" ,X,Y,BX,BY,W,H[,mode]
-void idwbmp() {
-#if USE_NTSC == 1 || USE_OLED == 1
-  int16_t x,y,bx,by,w, h, mode;
-  uint8_t* ptr;
-  uint8_t rc = 0; 
-  int16_t bw;
-  char* fname;
-  if (scmode||USE_OLED) { // コンソールがデバイスコンソールの場合
-    if(!(fname = getParamFname())) {
-      return;
-    }
-  
-    if (*cip != I_COMMA) {
-      err = ERR_SYNTAX;
-      return;    
-    }
-    cip++;
-  
-    // 引数取得
-    if ( getParam(x,  0, sc2.getGWidth(), true) ) return;       // x
-    if ( getParam(y,  0, ((tGraphicScreen*)sc)->getGHeight(), true) ) return;      // y
-    if ( getParam(bx, 0, 32767, true) ) return;                // bx
-    if ( getParam(by, 0, 32767, true) ) return;                // by
-    if ( getParam(w,  0, sc2.getGWidth(), true) ) return;       // w
-    if ( getParam(h,  0, sc2.getGHeight(), false) ) return;     // h
-    if (*cip == I_COMMA) {
-       cip++; if ( getParam(mode,  0, 1, false) ) return;      // mode     
-    }
-  
-    // サイズチェック
-    if (x + w > sc2.getGWidth() || y + h > sc2.getGHeight()) {
-      err = ERR_RANGE;
-      return;
-    }
-  
-    // 画像のロード
-  #if USE_SD_CARD == 1
-   #if USE_TFT == 1
-    bw  = sc2.getGWidth()/8;
-    ptr = sc2.getGRAM() + bw*y + x/8;
-    rc  = fs.loadBitmapToGVRAM(fname, ptr, x, y, bw, bx, by, w, h, mode);
-   #elif USE_OLED == 1 
-    bw  = sc2.getGWidth();
-    ptr = sc2.getGRAM();
-    rc  = fs.loadBitmapToGVRAM(fname, ptr, x, y, bw, bx, by, w, h, mode,1);
-    sc2.update();
-   #endif
-    if (rc == SD_ERR_INIT) {
-      err = ERR_SD_NOT_READY;
-    } else if (rc == SD_ERR_OPEN_FILE) {
-      err =  ERR_FILE_OPEN;
-    } else if (rc == SD_ERR_READ_FILE) {
-      err =  ERR_FILE_READ;
-    }
-  #endif
-
-  } else {
-   err = ERR_NOT_SUPPORTED;
-  }
-#elif USE_TFT ==1 && USE_SD_CARD == 1 
-  // DWBMP  "ファイル名" ,X,Y
-  int16_t x,y,bx,by,w, h;
-  uint8_t* ptr;
-  uint8_t rc; 
-  char* fname;
-  if (scmode||USE_TFT) { // コンソールがデバイスコンソールの場合
-    if(!(fname = getParamFname())) {
-      return;
-    }
-    if (*cip != I_COMMA) {
-      err = ERR_SYNTAX;
-      return;    
-    }
-    cip++;
-
-    // 引数取得
-    if ( getParam(x,  0, sc2.getGWidth()-1, true) ) return;       // x
-    if ( getParam(y,  0, sc2.getGHeight()-1, false) ) return;      // y
-    if (*cip == I_COMMA) {
-       cip++;
-       if ( getParam(bx, 0, 32767, true) ) return;   // bx
-       if ( getParam(by, 0, 32767, true) ) return;   // by
-       if ( getParam(w,  0, sc2.getGWidth(), true) ) return;       // w
-       if ( getParam(h,  0, sc2.getGHeight(), false) ) return;     // h
-    } else {
-      bx = 0; by = 0; w = sc2.getGWidth()-x; h = sc2.getGHeight()-y;
-    }
-    // サイズチェック
-    if (x+w  > sc2.getGWidth() || y+h > sc2.getGHeight()) {
-      err = ERR_RANGE;
-      return;
-    }
-    // 画像のロード
-#if USE_TFT == 1
-    rc = sc2.bmpDraw(fname,x,y,bx,by,w,h);
-#elif USE_OLED == 1
-    rc = sc2.bmpDraw(fname,x,y,bx,by,w,h);
-#endif    
-    if (rc == SD_ERR_INIT) {
-      err = ERR_SD_NOT_READY;
-    } else if (rc == SD_ERR_OPEN_FILE) {
-      err =  ERR_FILE_OPEN;
-    } else if (rc == SD_ERR_READ_FILE) {
-      err =  ERR_FILE_READ;
-    } else if (rc) {
-      err = ERR_BAD_FNAME;
-    }
-  } else {
-   err = ERR_NOT_SUPPORTED;
-  }
+// MSG dir,tm,..
+void imsg() {
+#if USE_MATRIX == 1
+  int16_t dir,tm;
+  if ( getParam(dir, 0, 4, true) )  return;
+  if ( getParam(tm, 0, 5000,true) )  return;
+  sc2.set_msg(dir,tm);
+  iprint(CDEV_MSG);
 #else
   err = ERR_NOT_SUPPORTED;
 #endif
 }
 
-// MKDIR "ファイル名"
-void imkdir() {
-#if 0
-  uint8_t rc;
-  char* fname;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
+// ACCELコマンド  ACCEL X,Y,Z
+void iaccel() {
+  int16_t v[3];
+  int16_t index;
   
-#if USE_SD_CARD == 1
-  rc = fs.mkdir(fname);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err = ERR_BAD_FNAME;
-  }
-#endif
-#endif
-}
-
-// RMDIR "ファイル名"
-void irmdir() {
-#if 0
-  char* fname;
-  uint8_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-
-#if USE_SD_CARD == 1
-  rc = fs.rmdir(fname);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err = ERR_BAD_FNAME;
-  }
-#endif
-#endif
-}
-/****
-// RENAME "現在のファイル名","新しいファイル名"
-void irename() {
-  char old_fname[SD_PATH_LEN];
-  char new_fname[SD_PATH_LEN];
-  uint8_t rc;
+  accel.update();
+  v[0] = accel.getX();
+  v[1] = accel.getY();
+  v[2] = accel.getZ();
   
-  if (*cip != I_STR) {
-    err = ERR_SYNTAX;
-    return;
-  }
-
-  cip++;
-
-  // ファイル名指定
-  if (*cip >= SD_PATH_LEN) {
-    err = ERR_LONGPATH;
-    return;
-  }  
-
-  // 現在のファイル名の取得
-  strncpy(old_fname, (char*)(cip+1), *cip);
-  old_fname[*cip]=0;
-  cip+=*cip;
-  cip++;
-
-  if (*cip != I_COMMA) {
-    err = ERR_SYNTAX;
-    return;    
-  }
-  cip++;
-  if (*cip!= I_STR) {
-    err = ERR_SYNTAX;
-    return;
-  }
-
-  cip++;
-
-  // ファイル名指定
-  if (*cip >= SD_PATH_LEN) {
-    err = ERR_LONGPATH;
-    return;
-  }  
-
-  // 新しいのファイル名の取得
-  strncpy(new_fname, (char*)(cip+1), *cip);
-  new_fname[*cip]=0;
-  cip+=*cip;
-  cip++;
-
-  rc = fs.rename(old_fname,new_fname);
-  if (rc) {
-    err = ERR_FILE_WRITE;
-    return;    
-  }
-}
-**/
-// REMOVE "ファイル名"
-void iremove() {
-#if 0
-  char* fname;
-  uint8_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-
-#if USE_SD_CARD == 1
-  rc = fs.remove(fname);
-  if (rc) {
-    err = ERR_FILE_WRITE;
-    return;    
-  }
-#endif
-#endif
-}
-
-// BSAVE "ファイル名", アドレス
-void ibsave() {
-#if 0
-  uint8_t*radr; 
-  int16_t vadr, len; 
-  char* fname;
-  uint8_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-
-  if (*cip != I_COMMA) {
-    err = ERR_SYNTAX;
-    return;    
-  }
-  cip++;
-  if ( getParam(vadr,  0, V_GRAM_TOP+6048-1, true) ) return; // アドレスの取得
-  if ( getParam(len,  0, 32767, false) ) return;             // データ長の取得
-
-  // アドレスの範囲チェック
-  if ( (uint32_t)vadr+(uint32_t)len > (uint32_t)(V_GRAM_TOP+6048) ) {
-    err = ERR_RANGE;
-    return;
-  }
-
-  // ファイルオープン
-#if USE_SD_CARD == 1
-  rc = fs.tmpOpen(fname,1);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-    return;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err =  ERR_FILE_OPEN;
-    return;
-  }
-  
-  // データの書込み
-  for (uint16_t i = 0 ; i < len; i++) {
-    radr = v2realAddr(vadr);
-    if (radr == NULL) {
-      goto DONE;
-    }
-    if(fs.putch(*radr)) {
-      err = ERR_FILE_WRITE;
-      goto DONE;
-    }
-    vadr++;
-  }
-
-DONE:
-  fs.tmpClose();
-#endif
-  return;
-#endif
-}
-
-void ibload() {
-#if 0
-  uint8_t*radr; 
-  int16_t vadr, len ,c;
-  char* fname;
-  uint8_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-
-  if (*cip != I_COMMA) {
-    err = ERR_SYNTAX;
-    return;    
-  }
-  cip++;
-  if ( getParam(vadr,  0, V_GRAM_TOP+6048-1, true) ) return;  // アドレスの取得
-  if ( getParam(len,  0, 32767, false) ) return;              // データ長の取得
-
-  // アドレスの範囲チェック
-  if ( (uint32_t)vadr+(uint32_t)len > (uint32_t)(V_GRAM_TOP+6048) ) {
-    err = ERR_RANGE;
-    return;
-  }
-#if USE_SD_CARD == 1
-  // ファイルオープン
-  rc = fs.tmpOpen(fname,0);
-  if (rc == SD_ERR_INIT) {
-    err = ERR_SD_NOT_READY;
-    return;
-  } else if (rc == SD_ERR_OPEN_FILE) {
-    err =  ERR_FILE_OPEN;
-    return;
-  }
-
-  // データの読込み
-  for (uint16_t i = 0 ; i < len; i++) {
-    radr = v2realAddr(vadr);
-    if (radr == NULL) {
-      goto DONE;
-    }
-    c = fs.read();
-    if (c <0 ) {
-      err = ERR_FILE_READ;
-      goto DONE;      
-    }
-    *radr = c;
-    vadr++;
-  }
-
-DONE:
-  fs.tmpClose();
-#endif  
-  return;
-#endif
-}
-
-// TYPE "ファイル名"
-void  icat() {
-#if 0
-  int16_t line = 0;
-  uint8_t c;
-
-  char* fname;
-  int16_t rc;
-
-  if(!(fname = getParamFname())) {
-    return;
-  }
-
-#if USE_SD_CARD == 1
-  while(1) {
-    rc = fs.textOut(fname, line, sc->getHeight()); 
-    if (rc < 0) {
-      if (rc == -SD_ERR_OPEN_FILE) {
-        err = ERR_FILE_OPEN;
-        return;
-      } else if (rc == -SD_ERR_INIT) {
-        err = ERR_SD_NOT_READY;
-        return;
-      } else if (rc == -SD_ERR_NOT_FILE) {
-        err =  ERR_BAD_FNAME;
-        return;
+  for (uint8_t i=0; i <3; i++) {    
+    if (*cip == I_VAR) {          // 変数の場合
+      cip++; index = *cip;        // 変数インデックスの取得
+      var[index] = v[i];          // 変数に格納
+      cip++;
+    } else if (*cip == I_ARRAY) { // 配列の場合
+      cip++;
+      index = getparam();         // 添え字の取得
+      if (err) return;  
+      if (index >= SIZE_ARRY || index < 0 ) {
+         err = ERR_SOR;
+         return; 
       }
-    } else if (rc == 0) {
-      break;
+      arr[index] = v[i];          // 配列に格納
+    } else {
+      err = ERR_SYNTAX;           // 変数・配列でない場合はエラーとする
+      return;   
+    }     
+    if(i != 2) {
+      if (*cip != I_COMMA) {      // ','のチェック
+         err = ERR_SYNTAX;
+         return; 
+      }
+      cip++;
     }
-   
-    c_puts("== More?('Y' or SPACE key) =="); newline();
-    c = c_getch();
-    if (c != 'y' && c!= 'Y' && c != 32)
-      break;      
-    line += sc->getHeight();
   }
-#endif
-#endif
 }
 
 // ターミナルスクリーンの画面サイズ指定 WIDTH W,H
@@ -3854,158 +2937,16 @@ void iwidth() {
 
   // 引数チェック
   if ( getParam(w,  16, SIZE_LINE, true) ) return;   // w
-  if ( getParam(h,  10,  45, false) ) return;        // h
-  if (scmode == 0) { // コンソールがシリアルコンソールの場合
-    // 現在、ターミナルモードの場合は画面をクリアして、再設定する
-    sc->cls();
-    sc->locate(0,0);
-    sc->end();
-    sc->init(w, h, SIZE_LINE, workarea); // スクリーン初期設定
-    sc->Serial_mode(serialMode, defbaud); // シリアルコンソールをUSARTに設定する
-  }
+  if ( getParam(h,  10,  30, false) ) return;        // h
+
 }
 
-// スクリーンモード指定 SCREEN M
-void iscreen() {
-#if USE_SCREEN_MODE == 1 // <<< デバイスコンソール利用可能定義開始 >>>
-  int16_t mode;            // スクリーンサイズモード
-  int16_t rt = DEV_RTMODE; // 画面向きのデフォルト指定
-
-  if ( getParam(mode, 1, MAX_SCMODE, false) ) return;   // m
- 
- #if USE_TFT == 1 || USE_OLED == 1 
-  if (*cip == I_COMMA) {
-    cip++;
-    if ( getParam(rt,0, 3, false) ) return;   // 画面回転 0～3
-  }
- #endif
-
-  if (scSizeMode == mode && scrt == rt) {
-    return; // 画面サイズの変更が無いので終了
-  }
-  
-  if (scSizeMode == SCSIZE_MODE_SERIAL) {
-    // 直前の画面がシリアルコンソールの場合、シリアルコンソールを開放する
-    sc->cls();            // 画面クリア
-    sc->show_curs(true);  // カーソル表示
-    sc->locate(0,0);      // ホームポジションに移動
-    sc->end();            // 終了・資源開放
-    sc = &sc2;            // カレントスクリーンの切替
-  }
- #if USE_NTSC == 1 
-  else {
-    // NTSC画面 資源開放
-    sc->end();
-  }
- #endif
-  
-  // NTSCスクリーン設定
-  scrt = rt;
-  scSizeMode = mode; // 新しい画面サイズモードの保持
-  scmode = 1;        // シリアルコンソールOFF
- #if USE_NTSC == 1   
-  ((tGraphicScreen*)sc)->init(ttbasic_font, SIZE_LINE, CONFIG.KEYBOARD,workarea, scSizeMode, CONFIG.NTSC,0); 
- #elif USE_TFT == 1 || USE_OLED == 1 
-  ((tGraphicScreen*)sc)->setScreen(scSizeMode,scrt);
- #endif  
-  ((tGraphicScreen*)sc)->cls();
-  ((tGraphicScreen*)sc)->show_curs(false);
-  ((tGraphicScreen*)sc)->draw_cls_curs();
-  ((tGraphicScreen*)sc)->locate(0,0);
-  ((tGraphicScreen*)sc)->refresh();    
-  sc->Serial_mode(serialMode, defbaud);  // デバイスコンソールのシリアル設定
-  
-#else
-   err = ERR_NOT_SUPPORTED;
-#endif
-}
-
-//
-// コンソールモード指定 console N
-// 機能 コンソールをデバイスコンソール、シリアルコンソール間で切り替える
-// 引数
-//  useParam false: コマンドラインから引数を取得する、true: 引数はparamArgを使用する
-//  paramArg コンソールモード(コマンドラインではなく関数呼び出しで引数渡)
-//  設定値 CON_MODE_DEVICE:デバイスコンソールモード、CON_MODE_SERIAL:シリアルコンソールモード
-//
-
-void iconsole(uint8_t useParam=false, uint8_t paramArg=CON_MODE_DEVICE) {
-#if USE_SCREEN_MODE == 1 // <<< デバイスコンソール利用可能定義開始 >>>
-
-  int16_t mode;        // コマンドライン引数  コンソールモード
-  int16_t rt = scrt;   // 画面の向き
-
-  if (useParam == false) {
-    // コマンドラインから引数：コンソールモード指定 を取得する
-    if ( getParam(mode,  CON_MODE_DEVICE, CON_MODE_SERIAL, false) ) {
-      return;   // // 引数の値取得とチェック
-    }
-    if ( ( mode == CON_MODE_DEVICE && scSizeMode != SCSIZE_MODE_SERIAL) ||
-         ( mode == CON_MODE_SERIAL && scSizeMode == SCSIZE_MODE_SERIAL)) {
-      return; // 指定したモードが現在と変化なしの場合は終了する
-    }
-  } else {
-    // 関数引数でのコンソールモードしえ値
-    mode = paramArg;
-  }
-
-  if (mode == CON_MODE_SERIAL) {     // デバイスコンソール => シリアルコンソール切り替え
-    prv_scrt = scrt;                 // 現在の画面向きを保存
-    prv_scSizeMode = scSizeMode;     // 現時点の画面サイズモードを保存する
-    scSizeMode = SCSIZE_MODE_SERIAL; // 画面サイズモードに リアルコンソールをセッ
-    scmode = 0;                      // シリアルコンソールON
-    sc->cls();                       // 画面クリア
-   
-  #if USE_NTSC == 1
-    sc->end();  // NTSCデバイスの場合 資源開放
-  #endif
-    
-    sc = &sc1;  // カレントスクリーンをシリアルコンソールし、初期化と資源獲得
-    ((tTermscreen*)sc)->init(TERM_W,TERM_H,SIZE_LINE, workarea); 
-    sc->Serial_mode(serialMode, defbaud); // シリアルコンソールをUSARTに設定
-    sc->cls();     
-  } else {  // シリアルコンソール => デバイススクリーン設定
-    // シリアルコンソール画面のクリア・終了・資源開放
-    sc->cls();            // 画面クリア
-    sc->show_curs(true);  // カーソル表示
-    sc->locate(0,0);      // ホームポジションに移動
-    sc->end();            // 終了・資源開放
-    // カレントスクリーンをNTSCスクリーンにし、初期化
-    sc = &sc2;                                  // スクルーン切替
-    scrt = prv_scrt;                            // 画面向きの設定
-    scSizeMode = prv_scSizeMode;                // 前回の画面サーズモードをセット
-    scmode = 1;                                 // シリアルコンソールOFF
-    if (!scSizeMode) scSizeMode = DEV_SCMODE;   // 画面サイズモードの設定
-    prv_scSizeMode = SCSIZE_MODE_SERIAL;        // 直前の画面サーズモードにシリアルコンソールをセット
-
-  #if USE_NTSC == 1
-    // NTSCの場合、指定した画面サイズでのビデオ信号を生成する
-    ((tGraphicScreen*)sc)->init(ttbasic_font, SIZE_LINE, CONFIG.KEYBOARD, workarea, scSizeMode, CONFIG.NTSC, 0);
-  #elif USE_TFT == 1 || USE_OLED == 1
-    ((tGraphicScreen*)sc)->setScreen(scSizeMode, scrt);  // 画面表示設定
-  #endif   
-    ((tGraphicScreen*)sc)->cls();              // 画面クリア
-    ((tGraphicScreen*)sc)->show_curs(false);   // カーソル非表示おモード
-    ((tGraphicScreen*)sc)->draw_cls_curs();    // カーソル消去
-    ((tGraphicScreen*)sc)->locate(0,0);        // ホームポジション
-    ((tGraphicScreen*)sc)->refresh();          // 画面リフレッシュ
-     sc->Serial_mode(serialMode, defbaud);  // デバイスコンソールのシリアルコンソールをUSARTに切り替える
-  }
-#else //<<< デバイスコンソール利用可能定義終了 >>>
-   err = ERR_NOT_SUPPORTED;
-#endif
-}
-  
 //
 // プログラムのロード・実行 LRUN/LOAD
 // LRUN プログラム番号
 // LRUN プログラム番号,行番号
 // LRUN プログラム番号,"ラベル"
-// LRUN "ファイル名"
-// LRUN "ファイル名",行番号
-// LRUN "ファイル名","ラベル"
 // LOAD プログラム番号
-// LOAD "ファイル名"
 
 // 戻り値
 //  1:正常 0:異常
@@ -4013,18 +2954,11 @@ void iconsole(uint8_t useParam=false, uint8_t paramArg=CON_MODE_DEVICE) {
 uint8_t ilrun() {
   int16_t prgno, lineno = -1;
   uint8_t *lp;
-  //char fname[SD_PATH_LEN];  // ファイル名
   uint8_t label[34];
   uint8_t len;
-  uint8_t mode = 0;        // ロードモード 0:フラッシュメモリ 1:SDカード
-  int8_t fg;               // ファイル形式 0:バイナリ形式  1:テキスト形式
-  uint8_t rc;
   uint8_t islrun = 1;
   uint8_t newmode = 1;
-  char* fname;
   int16_t flgMerge = 0;    // マージモード
-  uint8_t* ptr;
-  uint16_t sz;
   uint8_t flgPrm2 = 0;    // 第2引数の有無
   
   // コマンド識別
@@ -4034,21 +2968,11 @@ uint8_t ilrun() {
      newmode = 0;
   }
   
-  // ファイル名またはプログラム番号の取得
-  if ( *cip == I_STR || *cip == I_STRREF || *cip == I_CHR ||
-       *cip == I_HEX || *cip == I_BIN || *cip ==I_DMP
-  ) {
-    if(!(fname = getParamFname())) {
-      return 0;
-    }
-    mode = 1;
-  } else {
-    // 内部フラッシュメモリからの読込＆実行
-    if (*cip == I_EOL) {
-     prgno = 0;
-    } else { if ( getParam(prgno, 0, FLASH_SAVE_NUM-1, false) )
-     return 0; // プログラム番号
-    }
+  // 内部フラッシュメモリからの読込＆実行
+  if (*cip == I_EOL) {
+   prgno = 0;
+  } else { if ( getParam(prgno, 0, FLASH_SAVE_NUM-1, false) )
+   return 0; // プログラム番号
   }
  
  if (islrun) {
@@ -4084,62 +3008,14 @@ uint8_t ilrun() {
   }
   
   // プログラムのロード処理
-  if (mode == 0) {
-    // フラッシュメモリからプログラムのロード
-    if (!islrun && flgPrm2) {
-      // LOADコマンド時、フラッシュメモリからのロードで第2引数があった場合はエラーとする
-      err = ERR_SYNTAX;
-      return 0;
-    }
-    if ( loadPrg(prgno,newmode) ) {
-      return 0;
-    }
-  } else {
-#if USE_SD_CARD == 1
-    // SDカードからプログラムのロード
-    // SDカードからのロード
-    fg = fs.IsText(fname); // 形式チェック
-    if (fg < 0) {
-      // 形式異常
-      rc = -fg;
-      if( rc == SD_ERR_INIT ) {
-        err = ERR_SD_NOT_READY;
-      } else if (rc == SD_ERR_OPEN_FILE) {
-        err = ERR_FILE_OPEN;        
-      } else if (rc == SD_ERR_READ_FILE) {
-        err = ERR_FILE_READ;
-      } else if (rc == SD_ERR_NOT_FILE) {
-        err = ERR_BAD_FNAME;
-      }
-    } else if (fg == 0) {
-      // SDカードからのバイナリ形式ロード
-      ptr = listbuf;
-      sz  = SIZE_LIST;
-      if (newmode != 2) {
-        inew(newmode);
-      } else {
-        // ロード位置を追記開始位置に修正
-        
-        for (ptr = listbuf; *ptr; ptr += *ptr); //ポインタをリストの末尾へ移動
-        sz  = listbuf + SIZE_LIST - ptr - 1;
-      }
-      rc = fs.load(fname, ptr, sz); 
-      if( rc == SD_ERR_INIT ) {
-        err = ERR_SD_NOT_READY;
-      } else if (rc == SD_ERR_OPEN_FILE) {
-        err = ERR_FILE_OPEN;        
-      } else if (rc == SD_ERR_READ_FILE) {
-        err = ERR_FILE_READ;
-      }
-    } else if (fg == 1) {
-      // SDカードからのテキスト形式ロード
-      if( loadPrgText(fname,newmode)) {
-        err = ERR_FILE_READ;
-      }
-    }
-    if (err)
-      return 0;  
-#endif
+  // フラッシュメモリからプログラムのロード
+  if (!islrun && flgPrm2) {
+    // LOADコマンド時、フラッシュメモリからのロードで第2引数があった場合はエラーとする
+    err = ERR_SYNTAX;
+    return 0;
+  }
+  if ( loadPrg(prgno,newmode) ) {
+    return 0;
   }
 
   // 行番号・ラベル指定の処理
@@ -4286,7 +3162,7 @@ int16_t ivalue() {
   case I_GINP:  value = iginp();   break; //関数GINP(X,Y,W,H,C)
   case I_MAP:   value = imap();    break; //関数MAP(V,L1,H1,L2,H2)
   case I_ASC:   value = iasc();    break;// 関数ASC(文字列)
-    case I_RGB:   value = iRGB();  break;// 関数RGB(r,g,b)
+  //case I_RGB:   value = iRGB();    break;// 関数RGB(r,g,b)
 
   case I_LEN:  // 関数LEN(変数)
     if (checkOpen()) break;
@@ -4367,28 +3243,12 @@ int16_t ivalue() {
     value = analogRead(value);    // 入力値取得
     break;
 
-  case I_EEPREAD: // EEPREAD(アドレス)の場合
-    value = getparam(); 
-    if (err)  break;
-    value = ieepread(value);   // 入力値取得
-    break;
-
-  case I_SREAD: // SREAD() シリアルデータ1バイト受信
-    if (checkOpen()||checkClose()) break;   
-    value =sc->Serial_read();
-    break; //ここで打ち切る
-  
-  case I_SREADY:// SREADY() シリアルデータデータチェック
-    if (checkOpen()||checkClose()) break;   
-    value =sc->Serial_available();
-    break; //ここで打ち切る
-
   // 画面サイズ定数の参照
   case I_CW: value = sc->getWidth()   ; break;
   case I_CH: value = sc->getHeight()  ; break;
-#if USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1
-  case I_GW: value = scmode||USE_TFT||USE_OLED ? sc2.getGWidth():0  ; break;
-  case I_GH: value = scmode||USE_TFT||USE_OLED ? sc2.getGHeight():0 ; break;
+#if USE_MATRIX == 1
+  case I_GW: value = USE_MATRIX ? sc2.getGWidth():0  ; break;
+  case I_GH: value = USE_MATRIX ? sc2.getGHeight():0 ; break;
 #else
   case I_GW: value = 0 ; break;
   case I_GH: value = 0 ; break;
@@ -4398,6 +3258,7 @@ int16_t ivalue() {
   case I_DOWN:  value = 1   ; break;
   case I_RIGHT: value = 2   ; break;
   case I_LEFT:  value = 3   ; break;
+  case I_TOP:   value = 4   ; break;
 
    case I_BTNA: value = 5   ; break;
    case I_BTNB: value = 11   ; break;
@@ -4673,13 +3534,7 @@ void iinfo() {
   // SRAM未使用領域の表示
   c_puts("SRAM Free:");
   putnum((int16_t)(adr-hadr),0);
-  newline();
-#if 1  
-  // スクリーン関連
-  c_puts("scmode:");putnum(scmode,1);newline();
-  c_puts("scSizeMode:");putnum(scSizeMode,1);newline();
-  c_puts("serialMode:");putnum(serialMode,1);newline();
-#endif  
+  newline(); 
 }
 
 // ラベル
@@ -4941,50 +3796,31 @@ unsigned char* iexe() {
     case I_GETDATE: igetDate();       break;  // GETDATEコマンド
     case I_GETTIME: igetTime();       break;  // GETDATEコマンド
     case I_DATE:    idate();          break;  // DATEコマンド
-    case I_CLT:     iclt();           break;  // CLTコマンド
+    /*case I_CLT:     iclt();           break;  // CLTコマンド*/
     case I_REFLESH:   sc->refresh();   break;  // REFLESHコマンド 画面再表示
-    case I_EEPFORMAT: ieepformat();   break;  // EPPFORMAT EEPROM(エミュレーション)の初期化
-    case I_EEPWRITE:  ieepwrite();    break;  // EEPWRITE コマンド
     case I_PSET:      ipset();        break;  // PSETコマンド ドットの描画
     case I_LINE:      iline();        break;  // LINEコマンド 直線の描画
     case I_CIRCLE:    icircle();      break;  // CIRCLEコマンド 円の描画
     case I_RECT:      irect();        break;  // RECT四角の表示
     case I_BITMAP:    ibitmap();      break;  // BITMAPビットマップの描画
-    case I_CSCROLL:   icscroll();     break;  // CSCROLLキャラクタスクロール
     case I_GSCROLL:   igscroll();     break;  // GSCROLLグラフィックスクロール
-    case I_SWRITE:    iswrite();      break;  // シリアル1バイト出力
-    case I_SPRINT:    iprint(1);      break;  // SPRINT
     case I_GPRINT:    igprint();      break;  // GPRINT
-    case I_SOPEN:     isopen();       break;  // SOPEN
-    case I_SCLOSE:    isclose();      break;  // SCLOSE
-    case I_SMODE:     ismode();       break;  // SMODE 
+    case I_MSG:       imsg();         break;  // MSG
     case I_TONE:      itone();        break;  // TONE
     case I_NOTONE:    inotone();      break;  // NOTONE
     case I_CLV:       inew(2);        break;  // CLV 変数領域消去
     case I_INFO:      iinfo();        break;  // システム情報の表示(デバッグ用)
-    case I_LDBMP:      ildbmp();      break;  // LDBMP ビットマップファイルのロード
-    case I_MKDIR:      imkdir();      break;  // MKDIR ディレクトリの作成
-    case I_RMDIR:      irmdir();      break;  // RMDIR ディレクトリの削除
-    //case I_RENAME:   irename();     break;  // RENAME ファイル名の変更
-    case I_REMOVE:     iremove();     break;  // REMOVE ファイル削除
-    case I_BSAVE:      ibsave();      break;  // BSAVE メモリ領域の保存
-    case I_BLOAD:      ibload();      break;  // BLOAD メモリ領域へのロード
-    case I_DWBMP:      idwbmp();      break;  // DWBMP ビットマップファイルの直接描画
-    case I_CAT:        icat();        break;  // CAT テキストファイル表示
     case I_LRUN:       ilrun();       break;   
     case I_LIST:       sc->show_curs(0); ilist();  sc->show_curs(1);break;  // LIST
     case I_EXPORT:     iexport();     break;  // EXPORTコマンド
     case I_FILES:      ifiles();      break;
-    case I_CONFIG:     iconfig();     break;
-    case I_SAVECONFIG: isaveconfig(); break;
     case I_ERASE:      ierase();      break; 
     case I_NEW:        inew();        break;   // NEW
     case I_LOAD:       ilrun();       break;
     case I_SAVE:       isave();       break;
     case I_WIDTH:      iwidth();      break;
-    case I_SCREEN:     iscreen();     break;
-    case I_CONSOLE:    iconsole();    break;
-
+    case I_MATRIX:     imatrix();     break;  // MATRIX
+    case I_ACCEL:      iaccel();      break;  // ACCEL
     case I_RUN:    // RUN
     case I_RENUM:  // RENUM
     case I_DELETE: // DELETE
@@ -5034,6 +3870,29 @@ uint8_t icom() {
   return rc;
 }
 
+
+//
+// バッテリー駆動時の強制自動起動対応
+// ボタンAだけ5秒間押した後、Aボタンを離す  : リセット
+// ボタンA,Bを5秒間押した後、Aボタンだけ離す: リセット＆プログラムNo0 の自動起動
+//
+
+volatile uint32_t startTick;
+//ボタンAを押した場合の割り込み
+void handle_ButtonA() {
+   if (!digitalRead(5)) { // ボタンを押した
+     startTick = millis();
+     //Serial.println("Start");
+   } else {              // ボタンを離した
+    uint32_t tm = millis() - startTick;
+    if ( tm >= 5000 ) {
+      // ボタンAを5秒以上押した後ボタンを離した場合、リセットを行う
+      //Serial.println("Reset");
+      NVIC_SystemReset();
+    }    
+   }
+}
+
 /*
   TOYOSHIKI Tiny BASIC
   The BASIC entry point
@@ -5043,63 +3902,19 @@ void basic() {
   unsigned char len; // 中間コードの長さ
   uint8_t rc;        // 関数戻り値受け取り用
 
-  // SWD・JTAGの利用禁止
-#if 0
-  disableDebugPorts();
-  pinMode(PB4, INPUT); // 禁止後,JTRSTがHIGHのままのため、入力モードに変更
-#endif
-  // 起動時のモード指定チェック
-#if FLG_CHK_BOOT1 == 1
-  // BOOT1がHIGHの場合、シリアルコンソールモードで起動する
-  // さらに、SWCLKがLOWならUSBシリアル、HIGHならGPIOシリアルポートえを使う
-  if (digitalRead(PB2)) {
-      scmode = 0;
-     if (digitalRead(PA14)) {
-        serialMode = 1;
-     }
-  }
-#endif
-
-  // 環境設定のロード
-#if 0
-  FlashMan.loadConfig(CONFIG);
-#endif
   // プログラム領域の初期化
   inew();              
 
-// ワークエリアの獲得
-#if USE_NTSC == 1
-  workarea = (uint8_t*)malloc(7048); // SCREEN0で128x50まで
-#elif USE_OLED == 1
-  workarea = (uint8_t*)malloc(5760); // SCREEN0で128x45まで
-#else
-  workarea = (uint8_t*)malloc(1920); // SCREEN0で80x24まで
-#endif
+  // ワークエリアの獲得
+  workarea = (uint8_t*)malloc(3840); // SCREEN0で128x30まで
 
 #if USE_MATRIX == 1
  sc2.begin();
 #endif
 
-  // デバイススクリーンの初期化設定
-#if USE_SCREEN_MODE== 0 // シリアルコンソール利用
+  // シリアルコンソールの初期化設定
   sc = &sc1;
   ((tTermscreen*)sc)->init(TERM_W,TERM_H,SIZE_LINE, workarea); // スクリーン初期設定
-#elif USE_NTSC == 1 || USE_TFT == 1 || USE_OLED == 1 // デバイスコンソール利用
-  sc = &sc2;
-  scSizeMode = DEV_SCMODE;
-  scrt = DEV_RTMODE;
-  ((tGraphicScreen*)sc)->init(ttbasic_font, SIZE_LINE, CONFIG.KEYBOARD, workarea, scSizeMode, DEV_RTMODE, DEV_IFMODE);
-#endif
-  sc->Serial_mode(serialMode, defbaud); // デバイススクリーンのシリアル出力の設定
-  prv_scSizeMode = scSizeMode;
-  prv_scrt = scrt;
-
-#if USE_SCREEN_MODE== 1
- // 起動時の設定がコンソール指定の場合、切り替える
- if (scmode == 0) {
-   iconsole(true, CON_MODE_SERIAL);
- }
-#endif
 
  // PWM単音出力初期化
 #if 0
@@ -5130,18 +3945,19 @@ void basic() {
   // ボタンA,Bはデジタル入力モードに初期化済とする
   pinMode(5,INPUT);
   pinMode(11,INPUT);
-
-  // プログラム自動起動
-  if (digitalRead(5) ==0 && loadPrg(0) == 0) {
+  attachInterrupt(5,handle_ButtonA,CHANGE);
+  
+  // 加速度センサーの可動
+  accel.begin(false, 2); // 8ビットモード、2gレンジ
+  
+  // リセット時にBボタン押しでプログラム自動起動
+  if (digitalRead(11) ==0 && loadPrg(0) == 0) {
     // ロードに成功したら、プログラムを実行する
     sc->show_curs(0);        // カーソル非表示
     irun();                  // RUN命令を実行
 
     // 起動したプログラムの情報を表示
     newline();               // 改行
-    //c_puts("Autorun No."); 
-    //putnum(CONFIG.STARTPRG,0);c_puts(" done.");
-    //newline();
     err = 0; 
   }
 

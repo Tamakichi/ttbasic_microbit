@@ -1,4 +1,4 @@
-# 豊四季Tiny Basic for micro:bit V0.03
+# 豊四季Tiny Basic for micro:bit V0.04
 
 「豊四季Tiny Basic for micro:bit」は、オリジナル版「TOYOSHIKI Tiny BASIC for Arduino」を  
 Arduino micro:bit向けに移植・機能拡張したプログラムです。  
@@ -43,15 +43,27 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 
   - **FILES**、**SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加  
 
-  - LEDマトリックスの描画コマンド追加
+  - **ACCEL** x,y,z：加速度センサーの値取得
 
-    - **PSET** x,y,c
+  - LEDマトリックスの描画・制御コマンド追加
 
-    - **LINE** x1,y1,x2,y2,c
+    - **PSET** x,y,c：点の描画
 
-    - **RECT** x1,y1,w,h,c,mode
+    - **LINE** x1,y1,x2,y2,c：線の描画
 
-    - **CIRCLE** x,y,r,c,mode
+    - **RECT** x1,y1,w,h,c,mode：矩形の描画
+
+    - **CIRCLE** x,y,r,c,mode：円の描画
+
+    - **MSG** 方向,ウェイト,"文字列"：テキストメッセージの表示
+
+    - **GSCROLL** x1,y1,x2,y2,方向：スクロール
+
+    - **GPRINT** x,y,"文字列"：指定位置に文字の表示
+
+    - **BITMAP** x,y,データ格納アドレス,インデックス,h,w [,倍率]：ビットマップの表示
+
+    - **MATRIX** ON|OFF ：LEDマトリックス利用のON・OFF
 
       ​
 - 文法の変更  
@@ -72,17 +84,37 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 
 - その他  
   - プログラム領域を256バイトから4096バイトに拡大  
+
   - 配列サイズを32から100に拡大  
-  - 変数はA～Zの他に、A0..A6 ～ Z0..Z6の数字を付けた2桁も利用可能  
+
+  - 変数はA～Zの他に、A0..A6 ～ Z0..Z6の数字を付けた2桁も利用可能 
+
+  - リセット
+
+    -  ボタンAを５秒間押し続けた後、ボタンAを離す
+
+  - プログラムno.0の自動起動
+
+    - ボタンBを押しながら電源を入れるまたはリセットボタンでリセットする
+
+    - ボタンA、ボタンBを５秒間押し続けた後、ボタンAだけ離す
+
+      ​
 
 本プログラムは下記のライブラリを利用しています。  
-- mcursesライブラリ　<https://github.com/ChrisMicro/mcurses>  
-- Adafruit_microbit_Matrix (Adafruit_Microbit libraryを流用し改造) 
+- mcursesライブラリ（組込済み）　<https://github.com/ChrisMicro/mcurses>  
+
+- Adafruit_microbit_Matrix （組込済み）(Adafruit_Microbit libraryを流用し改造) 
   https://github.com/adafruit/Adafruit_Microbit   
 
-別途、Adafruit GFX libraryのインストールが必要です。  
+- Adafruit MMA8653 library （要別途インストール）下記のページのリンクからダウンロード
 
+  https://learn.adafruit.com/use-micro-bit-with-arduino/accelerometer-and-magnetometer
 
+- Adafruit GFX library（要別途インストール）下記のページのリンクからダウンロード
+  https://learn.adafruit.com/adafruit-gfx-graphics-library/
+
+  ​
 
 ## 利用方法
 
@@ -146,6 +178,7 @@ TeraTermを利用して、プログラムをコピー＆ペーストして取り
 
 ```
 1 'Lﾁｶ
+5 MATRIX OFF
 10 GPIO 3,OUTPUT
 20 OUT 3,LOW
 30 GPIO 26,OUTPUT
@@ -189,6 +222,20 @@ TeraTermを利用して、プログラムをコピー＆ペーストして取り
 80 NEXT Y
 90 IF D D=0 ELSE D=1
 100 GOTO 30
+```
+
+### LEDマトリックス メッセージ表示
+
+```
+10 CLS 1
+20 MSG LEFT,200,"ｺﾝﾆﾁﾊ"
+30 FOR I=O TO 30
+40 MSG DOWN,50,I/10
+50 WAIT 50
+60 MSG LEFT,100,I%10
+70 NEXT I
+80 WAIT 500
+90 GOTO 20
 ```
 
 

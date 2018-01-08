@@ -1,7 +1,6 @@
 //
-// 豊四季Tiny BASIC for Arduino STM32 グラフィック描画デバイス
-// 2017/07/19 by たま吉さん
-// 修正日 2017/08/19, 抽象化に移行、実体はハード依存の各スクリーンクラスにて実装
+// 豊四季Tiny BASIC for micro:bit グラフィック描画デバイス
+// 修正日 2018/01/05, micro:bit用に修正
 //
 
 #ifndef __tGraphicDev_h__
@@ -32,7 +31,7 @@ class tGraphicDev {
     virtual void cscroll(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t d) = 0; 
     virtual int16_t gpeek(int16_t x, int16_t y)  = 0;
     virtual int16_t ginp(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t c)  = 0;
-    virtual void set_gcursor(uint16_t, uint16_t)  = 0;
+    virtual void set_gcursor(int16_t, int16_t)  = 0;
     virtual void gputch(uint8_t c)  = 0;
 
 };
