@@ -292,6 +292,21 @@ MSG TOP,0,"A"
 80 GOTO 40
 ```
 
+### 時刻表示（Aボタンを押したら時刻を表示する）
+
+```
+1 'ﾄｹｲ
+10 MATRIX ON
+20 SETDATE 2018,1,16,12,0,0
+30 IF !IN(BTNA) GOSUB "@ShowTime"
+40 WAIT 200
+50 GOTO 30
+60 "@ShowTime"
+70 GETTIME T1,T2,T3
+80 MSG LEFT,80,#-2,T1;":";T2;":";T3;" "
+90 RETURN
+```
+
 
 
 ## 以降はオリジナルのドキュメントです
