@@ -1,4 +1,4 @@
-# 豊四季Tiny Basic for micro:bit V0.04
+# 豊四季Tiny Basic for micro:bit V0.05
 
 「豊四季Tiny Basic for micro:bit」は、オリジナル版「TOYOSHIKI Tiny BASIC for Arduino」を  
 Arduino micro:bit向けに移植・機能拡張したプログラムです。  
@@ -16,56 +16,77 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 - ラインエディタ部の差し換え  
   オリジナルのラインエディタ部分をフルスリーンテキストエディタに差し換えました.  
   ターミナル上で昔のBASICっぽい編集操作を出来るようにしました.  
+
 - コマンドの追加  
   - **RENUM** ：行番号再割り当て  
-
   - **CLS** ：画面クリア  
-
   - **LOCATE**：カーソル移動  
-
   - **COLOR**： 文字色の指定  
-
   - **ATTR**：文字装飾の指定  
-
   - **WAIT** n：時間待ち(マイクロ秒)  
-
   - **VPEEK**：スクリーン位置の文字コード参照  
-
   - **CHR$()**、**HEX$()**、**BIN$()**、**ASC()**、**INKEY()** 関数の追加  
-
   - **TICK()** 関数追加  
-
   - **?**：**PRINT**文の省略系を追加  
-
   - **AND**、**OR**、!、~、!の追加  
-
   - **GPIO**、**OUT**、**IN()**、**ANA()**：GPIO利用コマンドの追加  
-
-  - **FILES**、**SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加  
-
+  - **FILES**、**SAVE**、**LOAD**： 内部フラッシュメモリへのプログラム保存機能の追加 
   - **ACCEL** x,y,z：加速度センサーの値取得
 
   - LEDマトリックスの描画・制御コマンド追加
-
     - **PSET** x,y,c：点の描画
-
     - **LINE** x1,y1,x2,y2,c：線の描画
-
     - **RECT** x1,y1,w,h,c,mode：矩形の描画
-
     - **CIRCLE** x,y,r,c,mode：円の描画
-
     - **MSG** 方向,ウェイト,"文字列"：テキストメッセージの表示
-
     - **GSCROLL** x1,y1,x2,y2,方向：スクロール
-
     - **GPRINT** x,y,"文字列"：指定位置に文字の表示
-
     - **BITMAP** x,y,データ格納アドレス,インデックス,h,w [,倍率]：ビットマップの表示
-
     - **MATRIX** ON|OFF ：LEDマトリックス利用のON・OFF
 
-      ​
+   - PCG(文字定義機能)の追加
+      - **CLP** ：書き換えたFNT領域のデータをデフォルトに戻す
+      - **SETFONT** 文字コード,d1,d2,d3,d4,d5：指定した文字の5x5ドットフォントデータの設定
+        (FNT領域にPOKE文で変更する方法でも可能)
+
+   - PWM制御コマンドの追加
+      - **POUT**  pinNo,dty：PWM出力(dty に0～255で指定、255で100%)
+        ※STM32版と異なり、GPIOコマンドによるピンモード設定は不要  
+        ※PWMは同時に3つまで利用可能  
+
+   - NeoPixel制御コマンドの追加
+       - **NPBEGIN** datPin, LED数：NeoPixelの利用を開始する
+       - **NPEND**：NeoPixelの利用を終了する
+       - **NPCLS**：LEDの表示クリア
+       - **NPRGB** LEDNo, R, G, B [,表示指定]：指定したLEDの表示色RGB指定
+          LEDNoは0～LED数-1、R、G、Bは0～255で指定  
+          表示指定：0 設定のみで表示しない、1 指定した表示を行う（デフォルト）  
+       - **NPPSET** LEDNo, 色 [,表示指定]：指定したLEDの表示色指定
+          LEDNoは0～LED数-1、色は2バイト 0～32767（RGBの順番で各色5ビット）  
+          表示指定：0 設定のみで表示しない、1 指定した表示を行う（デフォルト）  
+       - **NPPUT**  LEDNo, 仮想アドレス, 転送数, バイト長 [,表示指定]：ピクセルデータの転送
+          バイト長は1,2,3の指定が可能。  
+          1の場合RGBは3,3,2ビット割当て、2の場合は5,5,5、3の場合は8,8,8  
+       - **NPSHOW** ：設定を表示に反映する
+       - **NPSHIFT** UP|DOWN [, ループ指定 [,表示指定]] ：表示を１つシフトする
+       - **NPLEVEL** 輝度：NPPSET、NPPUTで指定した色の輝度補正値を設定する
+          輝度：0～3（デフォルト 0）  
+       - 関数 **RGB(R,G,B)** ：R、G、Bから2バイト色コード （0～32767)を求める
+          R、G、Bは0～31の範囲で指定する  
+       - 関数 **RGB8(R,G,B)** ：R(0-7)、G(0-7)、B(0-3)から色コード （0～255)を求める
+
+- その他
+
+  - 2進数定数対応：`101010の形式で1から16ビットを定義
+
+  - RTC系コマンドのサポート（SETDATE、GATDATE、GETTIME、DATE）
+
+  - 関数 **GRAGE(**値, 配列No,個数)の追加
+
+    等級を求める関数（サンプルプログラム参照）
+
+    ​
+
 - 文法の変更  
   - 定数の16進数表記対応(例 $1234,$AB)  
   - 命令文区切りを';'から':'に変更  
@@ -84,37 +105,30 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 
 - その他  
   - プログラム領域を256バイトから4096バイトに拡大  
-
   - 配列サイズを32から100に拡大  
-
   - 変数はA～Zの他に、A0..A6 ～ Z0..Z6の数字を付けた2桁も利用可能 
-
   - リセット
-
     -  ボタンAを５秒間押し続けた後、ボタンAを離す
-
   - プログラムno.0の自動起動
-
     - ボタンBを押しながら電源を入れるまたはリセットボタンでリセットする
-
     - ボタンA、ボタンBを５秒間押し続けた後、ボタンAだけ離す
 
-      ​
+
+
 
 本プログラムは下記のライブラリを利用しています。  
-- mcursesライブラリ（組込済み）　<https://github.com/ChrisMicro/mcurses>  
 
-- Adafruit_microbit_Matrix （組込済み）(Adafruit_Microbit libraryを流用し改造) 
+- mcursesライブラリ（組込済み）
+  <https://github.com/ChrisMicro/mcurses>  
+- Adafruit_microbit_Matrix （組込済み）(Adafruit_Microbit libraryを流用し改造)   
   https://github.com/adafruit/Adafruit_Microbit   
+- nrf51-neopixel （組込済み）Arduino対応して組み込み   
+  https://github.com/lavallc/nrf51-neopixel  
+- Adafruit MMA8653 library （要別途インストール）下記のページのリンクからダウンロード  
+  https://learn.adafruit.com/use-micro-bit-with-arduino/accelerometer-and-magnetometer  
+- Adafruit GFX library（要別途インストール）下記のページのリンクからダウンロード  
+  https://learn.adafruit.com/adafruit-gfx-graphics-library/  
 
-- Adafruit MMA8653 library （要別途インストール）下記のページのリンクからダウンロード
-
-  https://learn.adafruit.com/use-micro-bit-with-arduino/accelerometer-and-magnetometer
-
-- Adafruit GFX library（要別途インストール）下記のページのリンクからダウンロード
-  https://learn.adafruit.com/adafruit-gfx-graphics-library/
-
-  ​
 
 ## 利用方法
 
@@ -236,6 +250,48 @@ TeraTermを利用して、プログラムをコピー＆ペーストして取り
 70 NEXT I
 80 WAIT 500
 90 GOTO 20
+```
+
+### LEDマトリックス 文字Aにフォントを割り当てて表示（１）
+
+```
+10 POKE FNT+ASC("A")*5+0,`00000000
+20 POKE FNT+ASC("A")*5+1,`01010000
+30 POKE FNT+ASC("A")*5+2,`00000000
+40 POKE FNT+ASC("A")*5+3,`10001000
+50 POKE FNT+ASC("A")*5+4,`01110000
+60 MSG TOP,0,"A"
+```
+
+### LEDマトリックス 文字Aにフォントを割り当てて表示（2）
+
+```
+10 SETFONT ASC("A"),$00,$50,$00,$88,$70
+MSG TOP,0,"A"
+```
+
+### Neopixel 青い軌跡の回転
+
+```
+10 'Neopixel(1)
+20 NPBEGIN 0,16
+30 NPCLS
+40 FOR I=0 TO 7
+50 NPRGB I,0,0,(2<<I)-1
+60 NEXT I
+70 NPSHIFT 1
+80 WAIT 50
+90 GOTO 70
+```
+
+### 4x4Keypadの入力キー判定
+
+```
+1 'Keypad 4x4
+10 @(10)=1013,920,840,780,670,630,590,560,502,477,455,435,400,320,267,228
+20 G=GRADE(ANA(1),10,16)
+30 IF G>=0 ?"KEY=[";G+1;"]"
+40 GOTO 20
 ```
 
 

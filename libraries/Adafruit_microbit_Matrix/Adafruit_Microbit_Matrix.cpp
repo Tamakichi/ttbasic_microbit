@@ -57,7 +57,6 @@ boolean Adafruit_Microbit_Matrix::begin(void) {
   currentRow = 0;
 
   startTimer();
-
   return true;
 }
 

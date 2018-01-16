@@ -1,13 +1,14 @@
 //
 // file: tMatrixScreen.cpp
-// SH1106/SSD1306/SSD1309利用ターミナルスクリーン制御クラス
-// 2017/09/14 作成
+// micro:bit LEDマトリックス制御クラス
+// 2017/12/28 作成
 //
 
 #include <string.h>
 #include "tMatrixScreen.h"
 //#include <Fonts/TomThumb.h>
-extern const unsigned char font5x5tt[];
+//extern const unsigned char font5x5tt[];
+extern const uint8_t* ttbasic_font;
 #ifndef swap
 #define swap(a, b) { int16_t t = a; a = b; b = t; }
 #endif
@@ -24,7 +25,8 @@ __attribute__((always_inline)) uint8_t* tMatrixScreen::getGRAM() {
 
 boolean tMatrixScreen::begin(void) {
   fontEx   = 1;                // フォント拡大率
-  font = (uint8_t*)font5x5tt;  // フォン
+ // font = (uint8_t*)font5x5tt;  // フォン
+  font = (uint8_t*)ttbasic_font;  // フォン
   f_width  = *(font+0)*fontEx; // 横フォントドット数
   f_height = *(font+1)*fontEx; // 縦フォントドット数
   g_width  = 5;
@@ -295,8 +297,10 @@ void tMatrixScreen::set_msg(uint8_t dir, uint16_t tm) {
   msg_tm   = tm;
 }  
 
-void tMatrixScreen::driveMatrix(uint8_t sw) {
-  cls();delay(100);
+void tMatrixScreen::driveMatrix(uint8_t sw, uint8_t flgCls) {
+  if (flgCls) {
+    cls();delay(100);
+  }
   if (sw) {
     matrix.restartTimer();
   } else {    

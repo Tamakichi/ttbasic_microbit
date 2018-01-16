@@ -11,6 +11,14 @@
 // 2017/12/26 V0.02 フラッシュメモリへのプログラム保存対応、デジタル入出力、アナログ入力対応
 // 2017/12/28 V0.03 LEDマトリックス制御機能の追加
 // 2018/01/07 V0.04 LEDマトリックスのスクロール、文字表示、加速度センサー、リセット時プログラム起動対応
+// 2018/01/08 CLS,REM,"'"を直接実行した場合、OKを表示しないように修正
+// 2018/01/09 INPUTの不具合対応（２桁変数対応、ENTERのみの入力禁止）
+// 2018/01/09 2進数定数対応
+// 2018/01/12 RTC対応(SETDATE,GETDATE,GETTIME,DATEコマンド対応)
+// 2018/01/13 PWM対応(POUT pin,duty:0-255)
+// 2018/01/14 NeoPixcel対応（NP.BEGIN,NP.END,NP.PSET,NP.CLS,NP.SHOWコマンド追加)
+// 2018/01/15 PCG(フォント定義)対応(CLV、SETFNTコマンド追加、FNT領域への書込み有効) V0.05
+// 2018/01/15 CHR$()で複数の文字コード指定の対応（?CHR$(65,66,67) => "ABC"
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -24,7 +32,7 @@
 //#include "sound.h"                // サウンド再生(Timer4 PWM端子 PB9を利用）
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.04"
+#define STR_VARSION "Edition V0.05"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
 #define SIZE_LINE 128    // コマンドライン入力バッファサイズ + NULL
@@ -48,10 +56,25 @@
 #define CDEV_MSG      5  // LEDメッセージ
 
 // *** フォント参照 ***************
-const uint8_t* ttbasic_font = DEVICE_FONT;
-uint16_t f_width  = *(ttbasic_font+0);
-uint16_t f_height = *(ttbasic_font+1);
-inline uint8_t* getFontAdr() { return (uint8_t*)ttbasic_font;};
+
+// PCGのサポート
+#define SIZE_PCG  (5*256+3)  // PCGフォント領域
+uint8_t pcgfont[SIZE_PCG];   // pcgフォントデータ領域
+
+//const uint8_t* ttbasic_font = DEVICE_FONT;
+const uint8_t* ttbasic_font = pcgfont;
+uint16_t f_width  = *(DEVICE_FONT+0);
+uint16_t f_height = *(DEVICE_FONT+1);
+
+// フォントアドレスの取得
+inline uint8_t* getFontAdr() {
+  return (uint8_t*)ttbasic_font;
+}
+
+// PCG領域へのフォントデータコピー
+void copyFont2PCG() {
+  memcpy(pcgfont,DEVICE_FONT,SIZE_PCG);
+}
 
 // **** スクリーン管理 *************
 #define CON_MODE_DEVICE    0        // コンソールモード デバイス
@@ -77,6 +100,7 @@ tTermscreen sc1;   // ターミナルスクリーン
 #if USE_MATRIX == 1
   #include "src/lib/tMatrixScreen.h"
   tMatrixScreen sc2;
+  uint8_t flgMatrixRun;
 #endif
 
 #define KEY_ENTER 13
@@ -109,13 +133,19 @@ void error(uint8_t flgCmd);
 MMA8653 accel;
 
 // **** RTC用宣言 ********************
-#if 0
-#if USE_INNERRTC == 1
-  #include <RTClock.h>
-  #include <time.h>
-  RTClock rtc(RTC_CLOCK_SRC);
+#if USE_RTC == 1
+  #include "src/lib/nrf51_rtc.h"
+  nrf51RTC rtc;
 #endif
+
+// ** neoPixel用 ********************
+#if USE_NEOPIXEL == 1
+  extern "C" {
+    #include "src/nrf51-neopixel/neopixel.h"
+  }
+  neopixel_strip_t m_strip;
 #endif
+
 // **** PWM用設定 ********************
 #define TIMER_DIV (F_CPU/1000000L)
 
@@ -159,9 +189,9 @@ const uint32_t pinType[] = {
 
 // ピン機能チェックテーブル ターミナルコンソールのみ利用環境
 const uint8_t pinFunc[] = {
-  5,5,5,5,5,1,1,1,1,1,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
-  5,1,1,1,1,1,1,0,0,1,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
-  1,0,0,1,1,1,1,1,1,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
+  7,7,7,7,7,3,3,3,3,3,  //  0 -  9: PN0,PN1,PN2,PN3,PN4,PN5,PN6,PN7,PN8,PN9,
+  7,3,3,3,3,3,3,0,0,3,  // 10 - 19: PN10,PN11,PN12,PN13,PN14,PN15,PN16,PN17,PN18,PN19, 
+  3,0,0,3,3,3,3,3,3,0,  // 20 - 29: PN20,PN21,PN22,PN23,PN24,PN25,PN26,PN27,PN28,PN29, 
   0,0,0,                // 30 - 32: PN30,PN31,PN32
 };
 
@@ -198,24 +228,18 @@ inline void newline(uint8_t devno=CDEV_SCREEN) {
   else if (devno == CDEV_MEMORY )
     mem_putch('\n'); // メモリーへの文字列出力
 }
-/*
-// tick用支援関数
-void iclt() {
-  //systick_uptime_millis = 0;
-}
-*/
+
 // 乱数
 short getrnd(short value) {
   return rand() % value +1;
 }
 
 // キーワードテーブル
-//const char *kwtbl[] __FLASH__  = {
 const char *kwtbl[] = {
  "GOTO", "GOSUB", "RETURN", "FOR", "TO", "STEP", "NEXT", "IF", "END", "ELSE",       // 制御命令(10)
- ",", ";", ":", "\'","-", "+", "*", "/", "%", "(", ")", "$", "<<", ">>", "|", "&",  // 演算子・記号(30)
+ ",", ";", ":", "\'","-", "+", "*", "/", "%", "(", ")", "$", "`","<<", ">>", "|", "&",  // 演算子・記号(31)
  ">=", "#", ">", "=", "<=", "!=", "<>","<", "AND", "OR", "!", "~", "^", "@",     
- /*"CLT", */ "WAIT",  // 時間待ち・時間計測コマンド(2)
+  "WAIT",        // 時間待ち・時間計測コマンド(1)
  "POKE",         // 記憶領域操作コマンド(1)
  "PRINT", "?", "INPUT", "CLS", "COLOR", "ATTR" ,"LOCATE", "REDRAW", "CSCROLL", // キャラクタ表示コマンド(9)
  "CHR$", "BIN$", "HEX$", "DMP$", "STR$",               // 文字列関数(5)
@@ -249,6 +273,12 @@ const char *kwtbl[] = {
  "LRUN", "FILES","EXPORT", "ERASE", "SYSINFO",
  "WIDTH", // 表示切替
  "ACCEL", // 加速度センサー値取得
+ "NPBEGIN","NPEND","NPCLS","NPPSET","NPUPDATE", "NPSHIFT", // NeoPixcel制御コマンド(11)
+ "NPRGB", "NPPUT","NPLEVEL", "RGB", "RGB8",
+ "CLP","SETFONT", // PCGコマンド(2)
+
+ "GRADE", // 等級判定関数
+ 
  "RENUM", "RUN", "DELETE", "OK",           // システムコマンド(4)
 };
 
@@ -258,10 +288,10 @@ const char *kwtbl[] = {
 // i-code(Intermediate code) assignment
 enum ICode:uint8_t { 
   I_GOTO, I_GOSUB, I_RETURN, I_FOR, I_TO, I_STEP, I_NEXT, I_IF, I_END, I_ELSE,                          // 制御命令(10)
-  I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR,  // 演算子・記号(30)
+  I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_APOST,  // 演算子・記号(31)
   I_LSHIFT, I_RSHIFT, I_OR, I_AND, I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LAND, I_LOR, I_LNOT,
   I_BITREV, I_XOR,  I_ARRAY, 
-  /*I_CLT,*/ I_WAIT,  // 時間待ち・時間計測コマンド(2)
+  I_WAIT,         // 時間待ち・時間計測コマンド(1)
   I_POKE,         // 記憶領域操作コマンド(1)
   I_PRINT, I_QUEST, I_INPUT, I_CLS, I_COLOR, I_ATTR, I_LOCATE,  I_REFLESH, I_CSCROLL,  // キャラクタ表示コマンド(9)
   I_CHR, I_BIN, I_HEX, I_DMP, I_STRREF,   // 文字列関数(5)
@@ -296,10 +326,16 @@ enum ICode:uint8_t {
   I_LRUN, I_FILES, I_EXPORT, I_ERASE, I_INFO,
   I_WIDTH, // 表示切替
   I_ACCEL, // 加速度センサー値取得
+  I_NPX_BEGIN, I_NPX_END, I_NPX_CLS, I_NPX_SET,I_NPX_SHOW, I_NPX_SHIFT, // NeoPixcel制御コマンド(10)
+  I_NPX_RGB, I_NPX_PUT, I_NPX_LEVEL, I_RGB, I_RGB8,
+   
+  I_CLP, I_SETFONT, // PCGコマンド(2)
+  I_GRADE,  // 等級判定関数
+  
   I_RENUM, I_RUN, I_DELETE, I_OK,  // システムコマンド(4)
 
   // 内部利用コード
-  I_NUM, I_STR, I_HEXNUM, I_VAR,
+  I_NUM, I_STR, I_HEXNUM, I_BINNUM, I_VAR,
   I_EOL, 
 };
 
@@ -307,14 +343,13 @@ enum ICode:uint8_t {
 // 後ろに空白を入れない中間コード
 const uint8_t i_nsa[] = {
   I_RETURN, I_END, 
-  /*I_CLT,*/
   I_HIGH, I_LOW,  I_ON, I_OFF,I_CW, I_CH, I_GW, I_GH, 
   I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
-  I_INKEY,I_VPEEK, I_CHR, I_ASC, I_HEX, I_BIN,I_LEN, I_STRREF,
+  I_INKEY,I_VPEEK, I_CHR, I_ASC, I_HEX, I_BIN,I_LEN, I_STRREF,I_RGB, I_RGB8,
   I_COMMA, I_SEMI, I_COLON, I_SQUOT,I_QUEST,
-  I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_LSHIFT, I_RSHIFT, I_OR, I_AND,
+  I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_APOST,I_LSHIFT, I_RSHIFT, I_OR, I_AND,
   I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LNOT, I_BITREV, I_XOR,
-  I_ARRAY, I_RND, I_ABS, I_FREE, I_TICK, I_PEEK, I_I2CW, I_I2CR,
+  I_ARRAY, I_RND, I_ABS, I_FREE, I_TICK, I_PEEK, I_I2CW, I_I2CR, 
 
   // ピンモードの定義
   I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
@@ -328,7 +363,7 @@ const uint8_t i_nsa[] = {
   I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
   I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_MPRG, I_MFNT,I_GRAM,
-  I_GPEEK, I_GINP,
+  I_GPEEK, I_GINP, I_GRADE,
 };
 
 // 前が定数か変数のとき前の空白をなくす中間コード
@@ -342,10 +377,13 @@ const uint8_t  i_nsb[] = {
 const uint8_t i_sf[]  = {
   I_ATTR, I_CLS, I_COLOR, I_DATE, I_END, I_FILES, I_TO, I_STEP,I_QUEST,I_LAND, I_LOR,
   I_GETDATE,I_GETTIME,I_GOSUB,I_GOTO,I_GPIO,I_INKEY,I_INPUT,I_LET,I_LIST,I_ELSE,
-  I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM, /*I_CLT,*/
+  I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM,
   I_RETURN,I_RUN,I_SAVE,I_SETDATE,I_SHIFTOUT,I_WAIT,I_MSG,I_MATRIX,
   I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP,
   I_TONE, I_NOTONE, I_CSCROLL, I_GSCROLL,I_EXPORT,
+  I_ACCEL,I_NPX_BEGIN, I_NPX_END, I_NPX_CLS, I_NPX_SET,I_NPX_SHOW,
+  I_NPX_RGB, I_NPX_PUT, I_NPX_LEVEL,
+  I_CLP,I_SETFONT,
 };
 
 // 例外検索関数
@@ -646,7 +684,7 @@ int16_t getnum() {
   len = 0; //文字数をクリア
   while(1) {
     c = c_getch();
-    if (c == KEY_ENTER) {
+    if (c == KEY_ENTER && len) {
         break;
     } else if (c == SC_KEY_CTRL_C || c==27) {
       err = ERR_CTR_C;
@@ -755,6 +793,10 @@ uint8_t toktoi() {
   uint32_t tmp;           // 変換過程の定数
   uint16_t hex;           // 16進数定数
   uint16_t hcnt;          // 16進数桁数
+
+  uint16_t bin;           // 2進数定数
+  uint16_t bcnt;          // 2進数桁数
+  
   uint8_t var_len;        // 変数名長さ
   char var_name[3];       // 変数名
   
@@ -795,7 +837,6 @@ uint8_t toktoi() {
           err = ERR_IBUFOF;         // エラー番号をセット
           return 0;                 // 0を持ち帰る
         }
-        //s = ptok; // 文字列の処理ずみの部分を詰める
         len--;    // I_DALLARを置き換えるために格納位置を移動
         ibuf[len++] = I_HEXNUM;  //中間コードを記録
         ibuf[len++] = hex & 255; //定数の下位バイトを記録
@@ -803,6 +844,32 @@ uint8_t toktoi() {
       }      
     }
 
+    // 2進数の変換を試みる $XXXX
+    if (key == I_APOST) {
+      if ( *s == '0'|| *s == '1' ) {    // もし文字が2進数文字なら
+        bin = 0;              // 定数をクリア
+        bcnt = 0;             // 桁数
+        do { //次の処理をやってみる
+          bin = (bin<<1) + (*s++)-'0' ; // 数字を値に変換
+          bcnt++;
+        } while ( *s == '0'|| *s == '1' ); //16進数文字がある限り繰り返す
+
+        if (bcnt > 16) {      // 桁溢れチェック
+          err = ERR_VOF;     // エラー番号オバーフローをセット
+          return 0;          // 0を持ち帰る
+        }
+  
+        if (len >= SIZE_IBUF - 3) { // もし中間コードが長すぎたら
+          err = ERR_IBUFOF;         // エラー番号をセット
+          return 0;                 // 0を持ち帰る
+        }
+        len--;    // I_APOSTを置き換えるために格納位置を移動
+        ibuf[len++] = I_BINNUM;  //中間コードを記録
+        ibuf[len++] = bin & 255; //定数の下位バイトを記録
+        ibuf[len++] = bin >> 8;  //定数の上位バイトを記録
+      }      
+    }
+    
     //コメントへの変換を試みる
     if(key == I_REM|| key == I_SQUOT) {       // もし中間コードがI_REMなら
       while (c_isspace(*s)) s++;         // 空白を読み飛ばす
@@ -1007,6 +1074,7 @@ uint8_t* getELSEptr(uint8_t* p) {
       break;
     case I_NUM:     // 定数
     case I_HEXNUM: 
+    case I_BINNUM:
       lp+=3;        // 整数2バイト+中間コード1バイト分移動
       break;
     case I_VAR:     // 変数
@@ -1122,13 +1190,27 @@ void putlist(unsigned char* ip, uint8_t devno=0) {
     //16進定数の処理
     if (*ip == I_HEXNUM) { //もし16進定数なら
       ip++; //ポインタを値へ進める
-      c_putch('$',devno); //空白を表示
+      c_putch('$',devno); //"$"を表示
       putHexnum(*ip | *(ip + 1) << 8, 2,devno); //値を取得して表示
       ip += 2; //ポインタを次の中間コードへ進める
       if (!nospaceb(*ip)) //もし例外にあたらなければ
         c_putch(' ',devno); //空白を表示
     }
     else
+
+    //2進定数の処理
+    if (*ip == I_BINNUM) { //もし2進定数なら
+      ip++; //ポインタを値へ進める
+      c_putch('`',devno); //"`"を表示
+      if (*(ip + 1))
+          putBinnum(*ip | *(ip + 1) << 8, 16,devno); //値を取得して16桁で表示
+      else
+          putBinnum(*ip , 8,devno);  //値を取得して8桁で表示
+      ip += 2; //ポインタを次の中間コードへ進める
+      if (!nospaceb(*ip)) //もし例外にあたらなければ
+        c_putch(' ',devno); //空白を表示
+    }
+    else    
     
     //変数の処理(2017/07/26 変数名 A～Z 9対応)
     if (*ip == I_VAR) { //もし定数なら
@@ -1191,114 +1273,103 @@ void iinput() {
   short ofvalue;        // オーバーフロー時の設定値
   uint8_t flgofset =0;  // オーバーフロ時の設定値指定あり
 
- sc->show_curs(1);
-  for(;;) {           // 無限に繰り返す
-    prompt = 1;       // まだプロンプトを表示していない
+  sc->show_curs(1);
+  prompt = 1;       // まだプロンプトを表示していない
 
-    // プロンプトが指定された場合の処理
-    if(*cip == I_STR){   // もし中間コードが文字列なら
-      cip++;             // 中間コードポインタを次へ進める
-      i = *cip++;        // 文字数を取得
-      while (i--)        // 文字数だけ繰り返す
-        c_putch(*cip++); // 文字を表示
-      prompt = 0;        // プロンプトを表示した
+  // プロンプトが指定された場合の処理
+  if(*cip == I_STR){   // もし中間コードが文字列なら
+    cip++;             // 中間コードポインタを次へ進める
+    i = *cip++;        // 文字数を取得
+    while (i--)        // 文字数だけ繰り返す
+      c_putch(*cip++); // 文字を表示
+    prompt = 0;        // プロンプトを表示した
 
-      if (*cip != I_COMMA) {
-        err = ERR_SYNTAX;
+    if (*cip != I_COMMA) {
+      err = ERR_SYNTAX;
+      goto DONE;
+    }
+    cip++;
+  }
+
+  // 値を入力する処理
+  switch (*cip++) {         // 中間コードで分岐
+  case I_VAR:             // 変数の場合
+    index = *cip;         // 変数番号の取得
+    cip++;
+   
+    // オーバーフロー時の設定値
+    if (*cip == I_COMMA) {
+      cip++;
+      ofvalue = iexp();
+      if (err) {
         goto DONE;
       }
-      cip++;
+      flgofset = 1;
+    }
+    
+    if (prompt) {          // もしまだプロンプトを表示していなければ
+      if (index >=26) {
+       c_putch('A'+index%26);    // 変数名を表示
+       c_putch('0'+index/26-1);  // 変数名を表示
+      } else {
+        c_putch('A'+index);  // 変数名を表示
+      }
+      c_putch(':');        //「:」を表示
+    }
+    
+    value = getnum();     // 値を入力
+    if (err) {            // もしエラーが生じたら
+      if (err == ERR_VOF && flgofset) {
+        err = ERR_OK;
+        value = ofvalue;
+      } else {
+        return;            // 終了
+      }
+    }
+    var[index] = value;  // 変数へ代入
+    break;               // 打ち切る
+
+  case I_ARRAY: // 配列の場合
+    index = getparam();       // 配列の添え字を取得
+    if (err)                  // もしエラーが生じたら
+      goto DONE;
+
+    if (index >= SIZE_ARRY) { // もし添え字が上限を超えたら
+      err = ERR_SOR;          // エラー番号をセット
+      goto DONE;
     }
 
-    // 値を入力する処理
-    switch (*cip++) {         // 中間コードで分岐
-    case I_VAR:             // 変数の場合
-      index = *cip;         // 変数番号の取得
+    // オーバーフロー時の設定値
+    if (*cip == I_COMMA) {
       cip++;
-     
-      // オーバーフロー時の設定値
-      if (*cip == I_COMMA) {
-        cip++;
-        ofvalue = iexp();
-        if (err) {
-          goto DONE;
-        }
-        flgofset = 1;
-      }
-      
-      if (prompt) {          // もしまだプロンプトを表示していなければ
-        c_putch('A'+index);  // 変数名を表示
-        c_putch(':');        //「:」を表示
-      }
-      
-      value = getnum();     // 値を入力
-      if (err) {            // もしエラーが生じたら
-        if (err == ERR_VOF && flgofset) {
-          err = ERR_OK;
-          value = ofvalue;
-        } else {
-          return;            // 終了
-        }
-      }
-      var[index] = value;  // 変数へ代入
-      break;               // 打ち切る
-
-    case I_ARRAY: // 配列の場合
-      index = getparam();       // 配列の添え字を取得
-      if (err)                  // もしエラーが生じたら
-        goto DONE;
-
-      if (index >= SIZE_ARRY) { // もし添え字が上限を超えたら
-        err = ERR_SOR;          // エラー番号をセット
+      ofvalue = iexp();
+      if (err) {
         goto DONE;
       }
+      flgofset = 1;
+    }
 
-      // オーバーフロー時の設定値
-      if (*cip == I_COMMA) {
-        cip++;
-        ofvalue = iexp();
-        if (err) {
-          goto DONE;
-        }
-        flgofset = 1;
+    if (prompt) { // もしまだプロンプトを表示していなければ
+      c_puts("@(");     //「@(」を表示
+      putnum(index, 0); // 添え字を表示
+      c_puts("):");     //「):」を表示
+    }
+    value = getnum(); // 値を入力
+    if (err) {           // もしエラーが生じたら
+      if (err == ERR_VOF && flgofset) {
+        err = ERR_OK;
+        value = ofvalue;
+      } else {
+        goto DONE;
       }
+    }
+    arr[index] = value; //配列へ代入
+    break;              // 打ち切る
 
-      if (prompt) { // もしまだプロンプトを表示していなければ
-        c_puts("@(");     //「@(」を表示
-        putnum(index, 0); // 添え字を表示
-        c_puts("):");     //「):」を表示
-      }
-      value = getnum(); // 値を入力
-      if (err) {           // もしエラーが生じたら
-        if (err == ERR_VOF && flgofset) {
-          err = ERR_OK;
-          value = ofvalue;
-        } else {
-          goto DONE;
-        }
-      }
-      arr[index] = value; //配列へ代入
-      break;              // 打ち切る
-
-    default: // 以上のいずれにも該当しなかった場合
-      err = ERR_SYNTAX; // エラー番号をセット
-      goto DONE;
-    } // 中間コードで分岐の末尾
-
-    //値の入力を連続するかどうか判定する処理
-    switch (*cip) { // 中間コードで分岐
-    case I_COMMA:    // コンマの場合
-      cip++;         // 中間コードポインタを次へ進める
-      break;         // 打ち切る
-    case I_COLON:    //「:」の場合
-    case I_EOL:      // 行末の場合
-      goto DONE;
-    default:      // 以上のいずれにも該当しなかった場合
-      err = ERR_SYNTAX; // エラー番号をセット
-      goto DONE;
-    } // 中間コードで分岐の末尾
-  }   // 無限に繰り返すの末尾
-
+  default: // 以上のいずれにも該当しなかった場合
+    err = ERR_SYNTAX; // エラー番号をセット
+    goto DONE;
+  } // 中間コードで分岐の末尾
 DONE:  
   sc->show_curs(0);
 }
@@ -1599,7 +1670,8 @@ void irenum() {
         i+=ptr[i]; // 文字列長分移動
         break;
       case I_NUM:  // 定数
-      case I_HEXNUM: 
+      case I_HEXNUM:
+      case I_BINNUM: 
         i+=3;      // 整数2バイト+中間コード1バイト分移動
         break;
       case I_VAR:  // 変数
@@ -1721,7 +1793,7 @@ void idelete() {
   }
 }
 
-// プログラムファイル一覧表示 FILES ["ファイルパス"]
+// プログラムファイル一覧表示 FILES
 void ifiles() {
   uint32_t flash_adr;
   uint8_t* save_clp;
@@ -1799,6 +1871,11 @@ void imatrix() {
   int16_t mode;
   if ( getParam(mode, 0, 1, false) ) return;
   sc2.driveMatrix(mode); 
+  flgMatrixRun = mode;
+}
+
+uint8_t isMatrixRunning() {
+  return flgMatrixRun;
 }
 
 // カーソル移動 LOCATE x,y
@@ -1943,8 +2020,9 @@ void idwrite() {
 //   0 正常
 //   1 異常(PWMを利用出来ないピンを利用した)
 //
-uint8_t pwm_out(uint8_t pin, uint16_t freq, uint16_t duty) {
 #if 0
+uint8_t pwm_out(uint8_t pin, uint16_t freq, uint16_t duty) {
+
   uint32_t dc,f,base_div;
   timer_dev *dev = PIN_MAP[pin].timer_device;     // ピン対応のタイマーデバイスの取得
   uint8 cc_channel = PIN_MAP[pin].timer_channel;  // ピン対応のタイマーチャンネルの取得
@@ -1965,33 +2043,320 @@ uint8_t pwm_out(uint8_t pin, uint16_t freq, uint16_t duty) {
   timer_set_reload(dev, f);                    // リセットカウント値を設定
   timer_set_mode(dev, cc_channel,TIMER_PWM);
   timer_set_compare(dev,cc_channel,dc);        // 比較レジスタの初期値指定(デューティ比 0)
-#endif
   return 0;
 }
+#endif
 
 // PWMコマンド
-// PWM ピン番号, DutyCycle, [周波数]
+// PWM ピン番号, DutyCycle
 void ipwm() {
   int16_t pinno;      // ピン番号
-  int16_t duty;       // デューティー値 0～4095
-  int16_t freq = 490; // 周波数
+  int16_t duty;       // デューティー値 0～255
 
   if ( getParam(pinno, 0, I_PN32-I_PN0, true) ) return;  // ピン番号取得
-  if ( getParam(duty,  0, 4095, false) ) return;         // デューティー値
-
-  if (*cip == I_COMMA) {
-    cip++;
-    if ( getParam(freq,  0, 32767, false) ) return;      // 周波数の取得
-  }
+  if ( getParam(duty,  0, 255, false) ) return;          // デューティー値
 
   // PWMピンとして利用可能かチェック
   if (!IsPWM_PIN(pinno)) {
     err = ERR_GPIO;
     return;    
   }
-    
-  if (pwm_out(pinno, freq, duty))
-      err = ERR_VALUE; 
+  analogWrite(pinno, duty);
+}
+
+uint8_t pauseMatrix(uint8_t pause) {
+  if (isMatrixRunning()) {
+    if (pause) {
+       sc2.driveMatrix(0,0); 
+    } else {
+       sc2.driveMatrix(1,0); 
+    }
+  }
+}
+
+// neopixelの利用開始
+// NPX.BEGIN pinNo, LedNum
+uint8_t m_flgNpxBegin = false;
+int16_t m_ledNum;
+int16_t m_NpxLevel = 0;
+void iNpxBegin() {
+  int16_t pinno;      // 制御用ピン番号
+  int16_t ledNum;     // LED数
+
+  if ( getParam(pinno,  0, I_PN32-I_PN0, true) ) return;  // ピン番号取得
+  if ( getParam(ledNum, 0, 128, false) ) return;          // デューティー値
+
+  if ( !IsIO_PIN(pinno) ) {
+    err = ERR_GPIO;
+    return;
+  }
+  
+  // NeoPixceの初期化
+  if (m_flgNpxBegin)
+    neopixel_destroy(&m_strip);
+  pauseMatrix(1);  
+  neopixel_init(&m_strip, pinno, ledNum);  
+  neopixel_clear(&m_strip);
+  pauseMatrix(0);  
+  m_flgNpxBegin = true;
+  m_ledNum = ledNum;
+}
+
+// neopixelの利用終了
+// NPX.END 
+void iNpxEnd() {
+  if (m_flgNpxBegin) {
+    // NeoPixcel用の資源開放
+    pauseMatrix(1);  
+    neopixel_clear(&m_strip);
+    neopixel_destroy(&m_strip);
+    pauseMatrix(0);  
+    m_flgNpxBegin = false;
+    m_ledNum = 0;
+  }
+}
+
+// neopixelの表示クリア
+// NPX.CLS
+void iNpxCls() {
+  if (m_flgNpxBegin) {
+    pauseMatrix(1);  
+    neopixel_clear(&m_strip);
+    pauseMatrix(0);  
+  }  
+}
+
+// neopixel 色の設定
+// NPX.SET No, R, G, B[ ,0|1]
+void iNpxRGB() {
+  int16_t ledNo;
+  int16_t colR, colG, colB;
+  int16_t flgUpdate = 1;
+  
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }
+
+  if ( getParam(ledNo,  0, m_ledNum-1, true) ) return;    // 設定対象LEDの指定
+  if ( getParam(colR, 0, 255, true) ) return;             // R値
+  if ( getParam(colG, 0, 255, true) ) return;             // G値
+  if ( getParam(colB, 0, 255, false) ) return;            // B値
+  if (*cip == I_COMMA) {
+      cip++;                                              // カンマをスキップ 
+      if ( getParam(flgUpdate, 0, 1, false) ) return;     // 表示反映指定
+  }
+  pauseMatrix(1);  
+  if (flgUpdate) 
+    neopixel_set_color_and_show(&m_strip, ledNo, colR, colG, colB);
+  else
+    neopixel_set_color(&m_strip, ledNo, colR, colG, colB);
+  pauseMatrix(0);  
+}
+
+// neopixel 輝度の設定
+// NP.LEVEL v
+// v:3ビット 0～3
+void iNpxLevel() {
+  int16_t level;
+  
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }  
+
+  if ( getParam(level,  0, 3, false) ) return;    // 輝度の設定
+  m_NpxLevel = level;
+}
+
+// neopixel ピクセルの表示
+// NPX.PSET No, rgb [,0|1]
+// R,G,B各5ビット
+void iNpxPset() {
+  int16_t ledNo;
+  int16_t rgb;
+  int16_t colR, colG, colB;
+  int16_t flgUpdate = 1;
+  
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }
+  
+  if ( getParam(ledNo,  0, m_ledNum-1, true) ) return;    // 設定対象LEDの指定
+  if ( getParam(rgb, 0, 32767, false) ) return;           // 色コード
+  if (*cip == I_COMMA) {
+      cip++;                        // カンマをスキップ 
+     if ( getParam(flgUpdate, 0, 1, false) ) return;      // 表示反映指定
+  }
+  
+  colR = ((rgb & 0b111110000000000)>>10)<<m_NpxLevel;
+  colG = ((rgb & 0b000001111100000)>>5)<<m_NpxLevel;
+  colB = ((rgb & 0b000000000011111)>>0)<<m_NpxLevel;
+
+  pauseMatrix(1);
+  if (flgUpdate)
+    neopixel_set_color_and_show(&m_strip, ledNo, colR, colG, colB);
+  else
+    neopixel_set_color(&m_strip, ledNo, colR, colG, colB);
+  pauseMatrix(0);  
+}
+
+// neopixel ピクセルデータの転送
+// NPX.PUT No, Addr, len, nByte, [,0|1]
+void iNpxPut() {
+  int16_t ledNo;
+  int16_t vadr;
+  uint8_t* adr;
+  int16_t len;
+  int16_t nByte;
+  int16_t rgb;
+  int16_t colR, colG, colB;
+  int16_t flgUpdate = 1;
+  
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }
+
+  if ( getParam(ledNo,  0, m_ledNum-1, true) ) return;    // 設定対象LEDの指定
+  if (getParam(vadr, 0, 32767, true)) return;             // データアドレス
+  if (getParam(len, 0, m_ledNum, true)) return;           // データ長
+  if (getParam(nByte, 1, 3, false)) return;               // 色バイト数(1～3)
+  if (*cip == I_COMMA) {
+      cip++;  // カンマをスキップ 
+     if ( getParam(flgUpdate, 0, 1, false) ) return;      // 表示反映指定
+  }
+
+  // データ長チェック
+  if (ledNo+len > m_ledNum) {
+     err = ERR_RANGE;
+     return;
+  }
+
+  // 実アドレス取得
+  adr  = v2realAddr(vadr);
+  if (adr == NULL || v2realAddr(vadr+len*nByte) == NULL) {
+     err = ERR_RANGE;
+     return;    
+  }
+
+  for (uint16_t i=0; i < len; i++) {   
+   if (nByte == 2) {
+      rgb = (adr[i*2]<<8) + adr[i*2+1];
+      colR = ((rgb & 0b111110000000000)>>10)<<m_NpxLevel;
+      colG = ((rgb & 0b000001111100000)>>5)<<m_NpxLevel;
+      colB = ((rgb & 0b000000000011111)>>0)<<m_NpxLevel;
+    } else if (nByte == 3) {
+      colR = adr[i*3+0];
+      colG = adr[i*3+1];
+      colB = adr[i*3+2];
+    } else {
+      rgb = adr[i];
+      colR = ((rgb & 0b11100000)>>5)<<(m_NpxLevel+2);
+      colG = ((rgb & 0b00011100)>>2)<<(m_NpxLevel+2);
+      colB = ((rgb & 0b00000011)>>0)<<(m_NpxLevel+3);    
+    }
+    m_strip.leds[ledNo+i].simple.r = colR;
+    m_strip.leds[ledNo+i].simple.g = colG;
+    m_strip.leds[ledNo+i].simple.b = colB;
+  }
+
+  if (flgUpdate) {
+     pauseMatrix(1);  
+     neopixel_show(&m_strip);
+     pauseMatrix(0);  
+  }  
+  
+}
+
+// neopixel 表示反映
+//NPX.SHOW
+void iNpxShow() {
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }
+  pauseMatrix(1);  
+  neopixel_show(&m_strip);
+  pauseMatrix(0);  
+}
+
+// neopixel LEDのシフト
+// NPX.SHIFT [UP|DOWN,[figRing[,flgUpdate]][
+void iNpxShift() {
+  int16_t drect =0;         // 方向
+  int16_t flgRing = 1;      // リング構成
+  int16_t flgUpdate = 1;    // 表示反映
+  uint8_t grb[3] = {0,0,0}; // 色退避用
+
+  if (!m_flgNpxBegin) {
+    err = ERR_NP_NOT_START;
+    return;
+  }
+  
+  if (*cip != I_EOL && *cip != I_COLON) {
+    if ( getParam(drect,  0, 1, false) ) return;     // 方向
+    if (*cip == I_COMMA) {
+      cip++;                                         // カンマをスキップ 
+      if ( getParam(flgRing,0, 1, false) ) return;   // リング構成
+      if (*cip == I_COMMA) {
+         cip++;                                          // カンマをスキップ 
+         if ( getParam(flgUpdate, 0, 1, false) ) return; // 表示反映指定
+      }
+    }  
+  }
+  
+  if (m_strip.num_leds <= 1 )
+     return;
+ 
+  if (drect == 0) {
+    // 上
+    if (flgRing) {
+       memcpy(grb, m_strip.leds[0].grb, 3);
+    }
+    memmove(&m_strip.leds[0], &m_strip.leds[1], (m_strip.num_leds-1)*3);
+    memcpy(m_strip.leds[m_strip.num_leds-1].grb, grb, 3);     
+  } else {
+    // 下
+    if (flgRing) {
+       memcpy(grb, m_strip.leds[m_strip.num_leds-1].grb, 3);    
+    }
+    memmove(&m_strip.leds[1], &m_strip.leds[0], (m_strip.num_leds-1)*3);
+    memcpy(m_strip.leds[0].grb, grb, 3);     
+  }
+
+  if (flgUpdate) {
+    pauseMatrix(1);  
+    neopixel_show(&m_strip);
+    pauseMatrix(0);
+  }
+}
+
+// CLPコマンド（PCG領域の初期化)
+void iCLP() {
+  copyFont2PCG();
+}
+
+// 指定文字コードへのフォントデータ設定
+// SETFONT code,d1,d2,d3,d4,d5
+void iSetFont() {
+  int16_t  code;            // 文字コード(0～255)
+  int16_t  d1,d2,d3,d4,d5;  // フォントデータ
+  uint8_t* fnt;
+  
+  if (getParam(code,  0, 255, true) ) return; // フォントコード
+  if (getParam(d1, 0, 255, true)) return;     // フォントデータの
+  if (getParam(d2, 0, 255, true)) return;
+  if (getParam(d3, 0, 255, true)) return;
+  if (getParam(d4, 0, 255, true)) return;
+  if (getParam(d5, 0, 255, false)) return;
+  fnt = (uint8_t*)ttbasic_font+3+code*5;
+  fnt[0] = d1;
+  fnt[1] = d2;
+  fnt[2] = d3;  
+  fnt[3] = d4;
+  fnt[4] = d5; 
 }
 
 // shiftOutコマンド SHIFTOUT dataPin, clockPin, bitOrder, value
@@ -2042,6 +2407,23 @@ void ibin(uint8_t devno=CDEV_SCREEN) {
   if (checkClose()) return;
   putBinnum(value, d, devno);    
 }
+
+// CHR$
+void ichr(uint8_t devno=CDEV_SCREEN) {
+  int16_t value; // 値
+  if (checkOpen()) return;
+  for(;;) {
+    if (getParam(value, 0,255,false)) return;
+    c_putch(value, devno);  
+    if (*cip == I_COMMA) {
+       cip++;
+       continue;
+    }
+    break;
+  }
+  if (checkClose()) return;
+}
+
 
 // 小数点数値出力 DMP$(数値) or DMP(数値,小数部桁数) or DMP(数値,小数部桁数,整数部桁指定)
 void idmp(uint8_t devno=CDEV_SCREEN) {
@@ -2138,7 +2520,7 @@ void ipoke() {
   vadr = iexp(); if(err) return ; 
   if (vadr < 0 ) { err = ERR_VALUE; return; }
   if(*cip != I_COMMA) { err = ERR_SYNTAX; return; }
-  if(vadr>=V_FNT_TOP && vadr < V_GRAM_TOP) { err = ERR_RANGE; return; }
+  //if(vadr>=V_FNT_TOP && vadr < V_GRAM_TOP) { err = ERR_RANGE; return; }
   
   // 例: 1,2,3,4,5 の連続設定処理
   do {
@@ -2284,13 +2666,38 @@ int16_t ipulseIn() {
   
   return rc;
 }
-  
-  
+
+// RGB関数 RGB(r,g,b)
+int16_t iRGB() {
+  int16_t colR, colG, colB;
+
+  // コマンドライン引数の取得
+  if (checkOpen()) return 0;                         // '('のチェック
+  if (getParam(colR, 0, 31, true)) return 0;         // R
+  if (getParam(colG, 0, 31, true)) return 0;         // G
+  if (getParam(colB, 0, 31, false)) return 0;        // B    
+  if (checkClose()) return 0;                        // ')'のチェック
+
+  return (colR<<10) | (colG<<5) | colB ;
+}
+
+// RGB関数 RGB8(r,g,b)
+int16_t iRGB8() {
+  int16_t colR, colG, colB;
+
+  // コマンドライン引数の取得
+  if (checkOpen()) return 0;                         // '('のチェック
+  if (getParam(colR, 0, 7, true)) return 0;         // R
+  if (getParam(colG, 0, 7, true)) return 0;         // G
+  if (getParam(colB, 0, 3, false)) return 0;        // B    
+  if (checkClose()) return 0;                       // ')'のチェック
+
+  return (colR<<5) | (colG<<2) | colB ;
+}
+
 // SETDATEコマンド  SETDATE 年,月,日,時,分,秒
 void isetDate() {
-#if 0
- #if USE_INNERRTC == 1
- #if OLD_RTC_LIB == 1 || defined(STM32_R20170323) // <<< RTClock R20170323安定版対応 >>>
+#if USE_RTC == 1
   struct tm t;
   int16_t p_year, p_mon, p_day;
   int16_t p_hour, p_min, p_sec;
@@ -2310,39 +2717,15 @@ void isetDate() {
   t.tm_hour  = p_hour;        // 時   [0-23]
   t.tm_min   = p_min;         // 分   [0-59]
   t.tm_sec   = p_sec;         // 秒   [0-61] うるう秒考慮
-  rtc.setTime(&t);            // 時刻の設定
- #else // <<< RTClock 更新版対応 >>>
-  struct tm_t t;
-  int16_t p_year, p_mon, p_day;
-  int16_t p_hour, p_min, p_sec;
-
-  if ( getParam(p_year, 1970,2105, true) ) return; // 年
-  if ( getParam(p_mon,     1,  12, true) ) return; // 月
-  if ( getParam(p_day,     1,  31, true) ) return; // 日
-  if ( getParam(p_hour,    0,  23, true) ) return; // 時
-  if ( getParam(p_min,     0,  59, true) ) return; // 分
-  if ( getParam(p_sec,     0,  61, false)) return; // 秒
-
-  // RTCの設定
-  t.year     = p_year - 1970; // 年   [1970からの経過年数]
-  t.month    = p_mon;         // 月   [1-12]
-  t.day      = p_day;         // 日   [1-31]
-  t.hour     = p_hour;        // 時   [0-23]
-  t.minute   = p_min;         // 分   [0-59]
-  t.second   = p_sec;         // 秒   [0-61] うるう秒考慮
-  rtc.setTime(t);             // 時刻の設定
- #endif
+  rtc.setTime(mktime(&t));    // 時刻の設定
 #else
   err = ERR_SYNTAX; return;
-#endif
 #endif
 }
 
 // GETDATEコマンド  SETDATE 年格納変数,月格納変数, 日格納変数, 曜日格納変数
 void igetDate() {
-#if 0
- #if USE_INNERRTC == 1
- #if OLD_RTC_LIB == 1 || defined(STM32_R20170323) // <<< RTClock R20170323安定版対応 >>>
+#if USE_RTC == 1
   int16_t index;  
   time_t tt; 
   struct tm* st;
@@ -2382,55 +2765,14 @@ void igetDate() {
       cip++;
     }
   }
- #else  // <<< RTClock 更新版対応 >>>
-  int16_t index;  
-  struct tm_t st;
-  rtc.getTime(st);   // 時刻取得
-  int16_t v[] = {
-    st.year+1970, 
-    st.month,
-    st.day,
-    st.weekday
-  };
-
-  for (uint8_t i=0; i <4; i++) {    
-    if (*cip == I_VAR) {          // 変数の場合
-      cip++; index = *cip;        // 変数インデックスの取得
-      var[index] = v[i];          // 変数に格納
-      cip++;
-    } else if (*cip == I_ARRAY) { // 配列の場合
-      cip++;
-      index = getparam();         // 添え字の取得
-      if (err) return;  
-      if (index >= SIZE_ARRY || index < 0 ) {
-         err = ERR_SOR;
-         return; 
-      }
-      arr[index] = v[i];          // 配列に格納
-    } else {
-      err = ERR_SYNTAX;           // 変数・配列でない場合はエラーとする
-      return;   
-    }     
-    if(i != 3) {
-      if (*cip != I_COMMA) {      // ','のチェック
-         err = ERR_SYNTAX;
-         return; 
-      }
-      cip++;
-    }
-  }
- #endif
 #else
   err = ERR_SYNTAX;
-#endif 
 #endif
 }
 
 // GETDATEコマンド  SETDATE 時格納変数,分格納変数, 秒格納変数
 void igetTime() {
-#if 0
- #if USE_INNERRTC == 1
- #if OLD_RTC_LIB == 1 || defined(STM32_R20170323) // <<< RTClock R20170323安定版対応 >>>
+#if USE_RTC == 1
   int16_t index;  
   time_t tt; 
   struct tm* st;
@@ -2469,54 +2811,14 @@ void igetTime() {
       cip++;
     }
   }
- #else  // <<< RTClock 更新版対応 >>>
-  int16_t index;  
-  struct tm_t st;
-  rtc.getTime(st);      // 時刻取得
-  int16_t v[] = {
-    st.hour,        // 時
-    st.minute,      // 分
-    st.second       // 秒
-  };
-
-  for (uint8_t i=0; i <3; i++) {    
-    if (*cip == I_VAR) {          // 変数の場合
-      cip++; index = *cip;        // 変数インデックスの取得
-      var[index] = v[i];          // 変数に格納
-      cip++;
-    } else if (*cip == I_ARRAY) { // 配列の場合
-      cip++;
-      index = getparam();         // 添え字の取得
-      if (err) return;  
-      if (index >= SIZE_ARRY || index < 0 ) {
-         err = ERR_SOR;
-         return; 
-      }
-      arr[index] = v[i];          // 配列に格納
-    } else {
-      err = ERR_SYNTAX;           // 変数・配列でない場合はエラーとする
-      return;   
-    }     
-    if(i != 2) {
-      if (*cip != I_COMMA) {      // ','のチェック
-         err = ERR_SYNTAX;
-         return; 
-      }
-      cip++;
-    }
-  }
- #endif
 #else
   err = ERR_SYNTAX;
 #endif  
-#endif
 }
 
 // DATEコマンド
 void idate() {
-#if 0
- #if USE_INNERRTC == 1
- #if OLD_RTC_LIB == 1 || defined(STM32_R20170323) // <<< RTClock R20170323安定版対応 >>>
+#if USE_RTC == 1
   static const char *wday[] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
    time_t tt; 
    struct tm* st;
@@ -2537,28 +2839,8 @@ void idate() {
    c_putch(':');
    putnum((int16_t)st->tm_sec, -2);
    newline();  
- #else
-  static const char *wday[] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
-   struct tm_t st;
-   rtc.getTime(st);      // 時刻取得
-   putnum(st.year+1970, -4);
-   c_putch('/');
-   putnum(st.month, -2);
-   c_putch('/');
-   putnum(st.day, -2);
-   c_puts(" [");
-   c_puts(wday[st.weekday]);
-   c_puts("] ");
-   putnum(st.hour, -2);
-   c_putch(':');
-   putnum(st.minute, -2);
-   c_putch(':');
-   putnum(st.second, -2);
-   newline();
- #endif 
 #else
   err = ERR_SYNTAX;
-#endif  
 #endif
 }
 
@@ -2753,6 +3035,28 @@ int16_t imap() {
   return rc;  
 }
 
+// 関数GRADE(値,配列番号,配列データ数)
+int16_t igrade() {
+  int16_t value,arrayIndex,len,rc;
+  if (checkOpen()) return 0;
+  if ( getParam(value, -32768, 32767, true) )  return 0;
+  if ( getParam(arrayIndex, 0, SIZE_ARRY-1, true) )  return 0;
+  if ( getParam(len, 0, SIZE_ARRY-1, false) )  return 0;
+  if (checkClose()) return 0;
+  if (arrayIndex+len > SIZE_ARRY) {
+    err = ERR_VALUE;
+    return 0;    
+  }
+  rc = -1;
+  for (uint16_t i=0; i < len; i++) {
+    if (value >= arr[arrayIndex+i])  {
+      rc = i;
+      break;
+    }
+  }
+  return rc;
+}
+
 // ASC(文字列)
 // ASC(文字列,文字位置)
 // ASC(変数,文字位置)
@@ -2817,9 +3121,11 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
       break; 
 
     case I_CHR: // CHR$()関数
-      cip++;
+      cip++; ichr(devno); break; // CHR$()関数
+/*
       if (getParam(value, 0,255,false)) break;   // 括弧の値を取得
       c_putch(value, devno);
+*/
      break;
 
     case I_HEX:  cip++; ihex(devno); break; // HEX$()関数
@@ -3083,6 +3389,7 @@ int16_t ivalue() {
   //定数の取得
   case I_NUM:    // 定数
   case I_HEXNUM: // 16進定数
+  case I_BINNUM: // 2進数定数
     value = *cip | *(cip + 1) << 8; //定数を取得
     cip += 2;
     break; 
@@ -3162,7 +3469,7 @@ int16_t ivalue() {
   case I_GINP:  value = iginp();   break; //関数GINP(X,Y,W,H,C)
   case I_MAP:   value = imap();    break; //関数MAP(V,L1,H1,L2,H2)
   case I_ASC:   value = iasc();    break;// 関数ASC(文字列)
-  //case I_RGB:   value = iRGB();    break;// 関数RGB(r,g,b)
+  case I_GRADE: value = igrade();  break;// 関数GRADE(値,配列番号,配列データ数)
 
   case I_LEN:  // 関数LEN(変数)
     if (checkOpen()) break;
@@ -3208,7 +3515,10 @@ int16_t ivalue() {
   case I_I2CR:  value = ii2cr();   break;    // I2CR()関数
   case I_SHIFTIN: value = ishiftIn(); break; // SHIFTIN()関数
   case I_PULSEIN: value = ipulseIn();  break;// PLUSEIN()関数
-  
+
+  case I_RGB:value = iRGB(); break; // RGB関数
+  case I_RGB8:value = iRGB8(); break; // RGB関数
+
   // 定数
   case I_HIGH:  value = CONST_HIGH; break;
   case I_LOW:   value = CONST_LOW;  break;
@@ -3535,6 +3845,11 @@ void iinfo() {
   c_puts("SRAM Free:");
   putnum((int16_t)(adr-hadr),0);
   newline(); 
+
+  // コマンドエントリー数
+  c_puts("Command table:");
+  putnum((int16_t)(I_EOL+1),0);
+  newline(); 
 }
 
 // ラベル
@@ -3821,6 +4136,20 @@ unsigned char* iexe() {
     case I_WIDTH:      iwidth();      break;
     case I_MATRIX:     imatrix();     break;  // MATRIX
     case I_ACCEL:      iaccel();      break;  // ACCEL
+    
+    case I_NPX_BEGIN:  iNpxBegin();   break;  // NeoPixcel
+    case I_NPX_END:    iNpxEnd();     break;
+    case I_NPX_CLS:    iNpxCls();     break;
+    case I_NPX_RGB:    iNpxRGB();     break;
+    case I_NPX_SET:    iNpxPset();    break;
+    case I_NPX_LEVEL:  iNpxLevel();   break;
+    case I_NPX_SHOW:   iNpxShow();    break;
+    case I_NPX_SHIFT:  iNpxShift();   break;
+    case I_NPX_PUT:    iNpxPut();     break;
+
+    case I_CLP:        iCLP();        break;
+    case I_SETFONT:    iSetFont();    break;
+
     case I_RUN:    // RUN
     case I_RENUM:  // RENUM
     case I_DELETE: // DELETE
@@ -3859,6 +4188,9 @@ uint8_t icom() {
   case I_RUN:   sc->show_curs(0); irun();  sc->show_curs(1);   break; // RUN命令
   case I_RENUM: irenum(); break; // I_RENUMの場合
   case I_DELETE:idelete();  break;    
+  case I_CLS:icls();
+  case I_REM:
+  case I_SQUOT:
   case I_OK:    rc = 0;     break; // I_OKの場合
   default:    // どれにも該当しない場合
     cip--;
@@ -3908,8 +4240,12 @@ void basic() {
   // ワークエリアの獲得
   workarea = (uint8_t*)malloc(3840); // SCREEN0で128x30まで
 
+  // フォントをPCG領域にコピー
+  copyFont2PCG();
+
 #if USE_MATRIX == 1
  sc2.begin();
+ flgMatrixRun = 1;
 #endif
 
   // シリアルコンソールの初期化設定
@@ -3921,13 +4257,12 @@ void basic() {
  dev_toneInit();
 #endif
 
- #if USE_SD_CARD == 1
-  // SDカード利用
-  fs.init(); // この処理ではGPIOの操作なし
+#if USE_RTC == 1
+  rtc.begin();
 #endif
-#if 0
+
   I2C_WIRE.begin();  // I2C利用開始
-#endif
+
   char* textline;    // 入力行
 
   // 起動メッセージ

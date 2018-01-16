@@ -9,6 +9,13 @@
 void basic(void);
 
 void setup(void){
+  // LFCLKSRCの設定
+  NRF_CLOCK->TASKS_LFCLKSTOP = 1;
+  NRF_CLOCK->LFCLKSRC = 
+    (uint32_t)((CLOCK_LFCLKSRC_SRC_Synth << CLOCK_LFCLKSRC_SRC_Pos) &
+    CLOCK_LFCLKSRC_SRC_Msk);
+  NRF_CLOCK->TASKS_LFCLKSTART = 1;
+    
   Serial.begin(115200);
   randomSeed(analogRead(0));
 }

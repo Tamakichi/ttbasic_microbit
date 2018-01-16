@@ -1,6 +1,7 @@
 //
 // 豊四季Tiny BASIC for Arduino STM32 エラーメッセージ定義
 // 2017/11/07 by たま吉さん
+// 2018/01/14 micro:bit 対応 by たま吉さん
 //
 
 #include <Arduino.h>
@@ -32,17 +33,8 @@ const char* errmsg[] /*__FLASH__*/ = {
   "Internal error",
   "Break",
   "Line too long",
-  "EEPROM out size",         // 追加
-  "EEPROM bad address",      // 追加
-  "EEPROM bad FLASH",        // 追加
-  "EEPROM not INIT",         // 追加
-  "EEPROM not vaid page",    // 追加
-  "File write error",        // 追加
-  "File read error",         // 追加
   "Cannot use GPIO function",// 追加
-  "Too long path",           // 追加
-  "File open error",         // 追加
-  "SD I/O error",            // 追加
-  "Bad file name",           // 追加
   "Not supported",           // 追加
+  "Neopixel not start",       // micro:bit V0.05で追加
+  
 };
