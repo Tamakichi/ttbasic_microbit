@@ -19,6 +19,7 @@
 // 2018/01/14 NeoPixcel対応（NP.BEGIN,NP.END,NP.PSET,NP.CLS,NP.SHOWコマンド追加)
 // 2018/01/15 PCG(フォント定義)対応(CLV、SETFNTコマンド追加、FNT領域への書込み有効) V0.05
 // 2018/01/15 CHR$()で複数の文字コード指定の対応（?CHR$(65,66,67) => "ABC"
+// 2018/01/16 GRADE(値, 配列No,個数)関数の追加
 
 #include <Arduino.h>
 #include <stdint.h>
