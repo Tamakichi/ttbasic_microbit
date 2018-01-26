@@ -20,6 +20,9 @@
 // 2018/01/15 PCG(フォント定義)対応(CLV、SETFNTコマンド追加、FNT領域への書込み有効) V0.05
 // 2018/01/15 CHR$()で複数の文字コード指定の対応（?CHR$(65,66,67) => "ABC"
 // 2018/01/16 GRADE(値, 配列No,個数)関数の追加
+// 2018/01/24 RND()の不具合対応 RND(N)は0～N-1の範囲とする
+// 2018/01/25 TONE,NOTONE,SETTONEコマンドの追加
+// 2018/01/26 PLAY,TEMPOコマンドの追加
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -30,14 +33,13 @@
 #include "src/lib/ttbasic_types.h"  // 定数定義
 #include "src/lib/tscreenBase.h"    // コンソール基本クラス
 #include "src/lib/tTermscreen.h"    // シリアルコンソールクラス
-//#include "sound.h"                // サウンド再生(Timer4 PWM端子 PB9を利用）
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.05"
+#define STR_VARSION "Edition V0.06"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
-#define SIZE_LINE 128    // コマンドライン入力バッファサイズ + NULL
-#define SIZE_IBUF 128    // 中間コード変換バッファサイズ
+#define SIZE_LINE 254    // コマンドライン入力バッファサイズ + NULL
+#define SIZE_IBUF 254    // 中間コード変換バッファサイズ
 #define SIZE_LIST 4096   // プログラム領域サイズ(4kバイト)
 #define SIZE_VAR  210    // 利用可能変数サイズ(A-Z,A0:A6-Z0:Z6の26+26*7=208)
 #define SIZE_ARRY 100    // 配列変数サイズ(@(0)～@(99)
@@ -124,6 +126,7 @@ tFlashMan FlashMan(FLASH_PAGE_NUM,FLASH_PAGE_SIZE, FLASH_SAVE_NUM, FLASH_PAGE_PA
 char* getParamFname();
 int16_t getNextLineNo(int16_t lineno);
 void mem_putch(uint8_t c);
+void iprint(uint8_t devno,uint8_t nonewln);
 
 unsigned char* iexe();
 short iexp(void);
@@ -146,6 +149,46 @@ MMA8653 accel;
   }
   neopixel_strip_t m_strip;
 #endif
+
+// **** サウンド再生 *****************
+#include "src/lib/sound.h"
+uint8_t  TonePin = 8;
+uint16_t mml_Tempo   = 120; // テンポ(50～512)
+uint16_t mml_len     = 4;   // 長さ(1,2,4,8,16,32)
+uint8_t  mml_oct     = 4;   // 音の高さ(1～8)
+
+const uint16_t mml_scale[12][8] = {
+  {33,65,131,262,523,1047,2093,4186},  // C
+  {35,69,139,277,554,1109,2217,4435},  // C#
+  {37,73,147,294,587,1175,2349,4699},  // D
+  {39,78,156,311,622,1245,2489,4978},  // D#
+  {41,82,165,330,659,1319,2637,5274},  // E
+  {44,87,175,349,698,1397,2794,5588},  // F
+  {46,93,185,370,740,1480,2960,5920},  // F#
+  {49,98,196,392,784,1568,3136,6272},  // G
+  {52,104,208,415,831,1661,3322,6643}, // G#
+  {55,110,220,440,880,1760,3520,7040}, // A
+  {58,117,233,466,932,1865,3729,7459}, // A#
+  {62,123,247,494,988,1976,3951,7902}, // B
+};
+
+#define MML_C_BASE 0
+#define MML_CS_BASE 1
+#define MML_D_BASE 2
+#define MML_DS_BASE 3
+#define MML_E_BASE 4
+#define MML_F_BASE 5
+#define MML_FS_BASE 6
+#define MML_G_BASE 7
+#define MML_GS_BASE 8
+#define MML_A_BASE 9
+#define MML_AS_BASE 10
+#define MML_B_BASE 11
+
+const uint8_t mml_scaleBase[] = {
+  MML_A_BASE,MML_B_BASE,MML_C_BASE,MML_D_BASE,MML_E_BASE,MML_F_BASE,MML_G_BASE,
+};
+
 
 // **** PWM用設定 ********************
 #define TIMER_DIV (F_CPU/1000000L)
@@ -268,13 +311,13 @@ const char *kwtbl[] = {
  // ピンモードの定義
  "OUTPUT", "INPUT_PU", "INPUT_PD", "INPUT_FL",
  
- "TONE", "NOTONE",                         // サウンドコマンド(2)
+ "TONE", "NOTONE","SETTONE","PLAY","TEMPO",// サウンドコマンド(5)
  "DATE", "GETDATE", "GETTIME", "SETDATE",  // RTC関連コマンド(4)
  "LOAD", "SAVE", "LIST", "NEW", "REM", "LET", "CLV",  // プログラム関連 コマンド(16)
  "LRUN", "FILES","EXPORT", "ERASE", "SYSINFO",
  "WIDTH", // 表示切替
  "ACCEL", // 加速度センサー値取得
- "NPBEGIN","NPEND","NPCLS","NPPSET","NPUPDATE", "NPSHIFT", // NeoPixcel制御コマンド(11)
+ "NPBEGIN","NPEND","NPCLS","NPPSET","NPSHOW", "NPSHIFT", // NeoPixcel制御コマンド(11)
  "NPRGB", "NPPUT","NPLEVEL", "RGB", "RGB8",
  "CLP","SETFONT", // PCGコマンド(2)
 
@@ -321,7 +364,7 @@ enum ICode:uint8_t {
   // ピンモードの定義
   I_OUTPUT, I_INPUT_PU, I_INPUT_PD, I_INPUT_FL,
  
-  I_TONE, I_NOTONE,                          // サウンドコマンド(2)
+  I_TONE, I_NOTONE,I_SETTONE,I_PLAY,I_TEMPO, // サウンドコマンド(5)
   I_DATE, I_GETDATE, I_GETTIME, I_SETDATE,   // RTC関連コマンド(4)
   I_LOAD, I_SAVE, I_LIST, I_NEW, I_REM, I_LET, I_CLV,  // プログラム関連 コマンド(16)
   I_LRUN, I_FILES, I_EXPORT, I_ERASE, I_INFO,
@@ -381,7 +424,7 @@ const uint8_t i_sf[]  = {
   I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM,
   I_RETURN,I_RUN,I_SAVE,I_SETDATE,I_SHIFTOUT,I_WAIT,I_MSG,I_MATRIX,
   I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP,
-  I_TONE, I_NOTONE, I_CSCROLL, I_GSCROLL,I_EXPORT,
+  I_TONE, I_NOTONE, I_SETTONE, I_PLAY, I_CSCROLL, I_GSCROLL,I_EXPORT,
   I_ACCEL,I_NPX_BEGIN, I_NPX_END, I_NPX_CLS, I_NPX_SET,I_NPX_SHOW,
   I_NPX_RGB, I_NPX_PUT, I_NPX_LEVEL,
   I_CLP,I_SETFONT,
@@ -1966,32 +2009,13 @@ void igpio() {
   // 入出力ピンの指定
   if ( getParam(pinno, 0, I_PN32-I_PN0, true) ) return; // ピン番号取得
   pmode = iexp();  if(err) return ; // 入出力モードの取得
-#if 0
-  // ピンモードの設定
-  if (pmode == PWM) {
-    // PWMピンとして利用可能かチェック
-    if (!IsPWM_PIN(pinno)) {
-      err = ERR_GPIO;
-      return;    
-    }
-    pinMode(pinno, pmode);
-    pwmWrite(pinno,0);
-  } else if (pmode == INPUT_ANALOG ) {
-    // アナログ入力として利用可能かチェック
-    if (!IsADC_PIN(pinno)) {
-      err = ERR_GPIO;
-      return;    
-    }    
-    pinMode(pinno, pmode);
-  } else {
-#endif
-    // デジタル入出力として利用可能かチェック
-    if (!IsIO_PIN(pinno)) {
-      err = ERR_GPIO;
-      return;    
-    }    
-    pinMode(pinno, pmode);    
-//  }
+
+  // デジタル入出力として利用可能かチェック
+  if (!IsIO_PIN(pinno)) {
+    err = ERR_GPIO;
+    return;    
+  }    
+  pinMode(pinno, pmode);    
 }
 
 // GPIO ピンデジタル出力
@@ -2244,7 +2268,7 @@ void iNpxPut() {
 
   for (uint16_t i=0; i < len; i++) {   
    if (nByte == 2) {
-      rgb = (adr[i*2]<<8) + adr[i*2+1];
+      rgb = (adr[i*2+1]<<8) + adr[i*2];
       colR = ((rgb & 0b111110000000000)>>10)<<m_NpxLevel;
       colG = ((rgb & 0b000001111100000)>>5)<<m_NpxLevel;
       colB = ((rgb & 0b000000000011111)>>0)<<m_NpxLevel;
@@ -2850,11 +2874,10 @@ void ipset() {
 #if USE_MATRIX == 1
  int16_t x,y,c;
   if (getParam(x,true)||getParam(y,true)||getParam(c,false)) 
-  if (x < 0) x =0;
-  if (y < 0) y =0;
-  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
+    return;
+ 
   if (c < 0 || c > 2) c = 1;
+
   sc2.pset(x,y,c);
 #else
   err = ERR_NOT_SUPPORTED;
@@ -2866,14 +2889,8 @@ void iline() {
 #if USE_MATRIX == 1
   int16_t x1,x2,y1,y2,c;
   if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,false)) 
-  if (x1 < 0) x1 =0;
-  if (y1 < 0) y1 =0;
-  if (x2 < 0) x1 =0;
-  if (y2 < 0) y1 =0;
-  if (x1 >= sc2.getGWidth())  x1 = sc2.getGWidth()-1;
-  if (y1 >= sc2.getGHeight()) y1 = sc2.getGHeight()-1;
-  if (x2 >= sc2.getGWidth())  x2 = sc2.getGWidth()-1;
-  if (y2 >= sc2.getGHeight()) y2 = sc2.getGHeight()-1;
+    return;
+
   if (c < 0 || c > 2) c = 1;
   sc2.line(x1, y1, x2, y2, c);
 #else
@@ -2886,10 +2903,8 @@ void icircle() {
 #if USE_MATRIX == 1
   int16_t x,y,r,c,f;
   if (getParam(x,true)||getParam(y,true)||getParam(r,true)||getParam(c,true)||getParam(f,false)) 
-  if (x < 0) x =0;
-  if (y < 0) y =0;
-  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
+     return;
+
   if (c < 0 || c > 2) c = 1;
   if (r < 0) r = 1;
     sc2.circle(x, y, r, c, f);
@@ -2904,11 +2919,8 @@ void irect() {
   int16_t x1,y1,x2,y2,c,f;
   if (getParam(x1,true)||getParam(y1,true)||getParam(x2,true)||getParam(y2,true)||getParam(c,true)||getParam(f,false)) 
     return;
-  if (x1 < 0 || y1 < 0 || x2 < x1 || y2 < y1 || x2 >= sc2.getGWidth() || y2 >= sc2.getGHeight())  {
-    err = ERR_VALUE;
-    return;      
-  }
-  if (c < 0 || c > 2) c = 1;
+
+ if (c < 0 || c > 2) c = 1;
   sc2.rect(x1, y1, x2-x1+1, y2-y1+1, c, f);
 #else
   err = ERR_NOT_SUPPORTED;
@@ -2939,10 +2951,6 @@ void ibitmap() {
     return;
   }
 
-  if (x < 0) x =0;
-  if (y < 0) y =0;
-  if (x >= sc2.getGWidth())  x = sc2.getGWidth()-1;
-  if (y >= sc2.getGHeight()) y = sc2.getGHeight()-1;
   if (index < 0) index = 0;
   if (w < 0) w =1;
   if (h < 0) h =1; 
@@ -2972,7 +2980,6 @@ void igscroll() {
 
 // TONE 周波数 [,音出し時間]
 void itone() {
-#if 0
   int16_t freq;   // 周波数
   int16_t tm = 0; // 音出し時間
 
@@ -2981,15 +2988,247 @@ void itone() {
     cip++;
     if ( getParam(tm, 0, 32767, false) ) return;
   }
-  dev_tone(freq, tm);
-#endif
+  dev_tone(TonePin ,freq, tm);
 }
 
 //　NOTONE
 void inotone() {
-#if 0
 	dev_notone();
-#endif
+}
+
+// SETTONE pin番号
+void isettone() {
+  int16_t pinno;  
+  if ( getParam(pinno, 0, I_PN32-I_PN0, false) ) return; // ピン番号取得
+
+  // デジタル出力として利用可能かチェック
+  if (!IsIO_PIN(pinno)) {
+    err = ERR_GPIO;
+    return;    
+  }
+  dev_notone();
+  TonePin = pinno;
+}
+
+// TEMPO テンポ
+void itempo() {
+  int16_t tempo;  
+  if ( getParam(tempo, 32, 500, false) ) return; // テンポの取得
+  mml_Tempo = tempo;
+}
+
+// PLAY 文字列
+void iplay() {
+  char* ptr = tbuf;
+  uint16_t freq;              // 周波数
+  uint16_t len = mml_len ;    // 共通長さ
+  uint8_t  oct = mml_oct ;    // 共通高さ
+
+  uint16_t local_len = mml_len ;    // 個別長さ
+  uint8_t  local_oct = mml_oct ;    // 個別高さ
+  
+  
+  uint16_t tempo = mml_Tempo; // テンポ
+  int8_t  scale = 0;          // 音階
+  uint8_t flgScale = 0;       // 音階記号フラグ
+  uint32_t duration;          // 再生時間(msec)
+  uint8_t flgExtlen = 0;
+  
+  // 引数のMMLをバッファに格納する
+  cleartbuf();
+  iprint(CDEV_MEMORY,1);
+  if (err)
+    return;
+
+  // MMLの評価
+  while(*ptr) {
+    flgExtlen = 0;
+    local_len = len;
+    local_oct = oct;
+    
+    //強制的な中断の判定
+    uint8_t c = c_kbhit();
+    if (c) { // もし未読文字があったら
+        if (c == SC_KEY_CTRL_C || c==27 ) { // 読み込んでもし[ESC],［CTRL_C］キーだったら
+          err = ERR_CTR_C;                  // エラー番号をセット
+          prevPressKey = 0;
+          break;
+        } else {
+          prevPressKey = c;
+        }
+     }
+
+    // 英字を大文字に統一
+    if (*ptr >= 'a' && *ptr <= 'z')
+       *ptr = 'A' + *ptr - 'a';
+
+    // 空白はスキップ    
+    if (*ptr == ' '|| *ptr == '&') {
+      ptr++;
+      continue;
+    }
+    // 音階記号
+    if (*ptr >= 'A' && *ptr <= 'G') {
+      scale = mml_scaleBase[*ptr-'A']; // 音階コードの取得        
+      ptr++;
+
+      // 半音上げ下げ
+      if (*ptr == '#' || *ptr == '+') {
+        // 半音上げる
+        if (scale < MML_B_BASE) {
+          scale++;
+        } else {
+          if (local_oct < 8) {
+            scale = MML_B_BASE;
+            local_oct++;
+          }
+        }
+        ptr++;
+      } else if (*ptr == '-') {
+        // 半音下げる
+        if (scale > MML_C_BASE) {
+          scale--;
+        } else {
+          if (local_oct > 1) {
+            scale = MML_B_BASE;
+            local_oct--;
+          }
+        }                
+        ptr++;      
+      } 
+
+      // 長さの指定
+      uint16_t tmpLen =0;
+      char* tmpPtr = ptr;
+      while(isdigit(*ptr)) {
+         tmpLen*= 10;
+         tmpLen+= *ptr - '0';
+         ptr++;
+      }
+      if (tmpPtr != ptr) {
+        // 長さ引数ありの場合、長さを評価
+        switch(tmpLen) {
+          case 1: case 2:  case 4: case 8: case 16: case 32: case 64:
+            local_len = tmpLen;
+            break;
+          default: // 長さ指定エラー
+            err = ERR_MML; 
+            return;
+        }
+      }    
+
+      // 半音伸ばし
+      if (*ptr == '.') {
+        ptr++;
+        flgExtlen = 1;
+      } 
+    
+      // 音階の再生
+      duration = 240000/tempo/local_len;  // 再生時間(msec)
+      if (flgExtlen)
+        duration += duration>>1;
+        
+      freq = mml_scale[scale][local_oct-1]; // 再生周波数(Hz);
+      dev_tone(TonePin ,freq, (uint16_t)duration);  // 音の再生         
+
+    } else if (*ptr == 'L') {  // 長さの指定     
+      ptr++;
+      uint16_t tmpLen =0;
+      char* tmpPtr = ptr;
+      while(isdigit(*ptr)) {
+         tmpLen*= 10;
+         tmpLen+= *ptr - '0';
+         ptr++;
+      }
+      if (tmpPtr != ptr) {
+        // 長さ引数ありの場合、長さを評価
+        switch(tmpLen) {
+          case 1: case 2:  case 4: case 8: case 16: case 32: case 64:
+            len = tmpLen;
+            break;
+          default: // 長さ指定エラー
+            err = ERR_MML; 
+            return;
+        }
+      }   
+    } else if (*ptr == 'O') { // オクターブの指定
+      ptr++;
+      uint16_t tmpOct =0;
+      while(isdigit(*ptr)) {
+         tmpOct*= 10;
+         tmpOct+= *ptr - '0';
+         ptr++;
+      }
+      if (tmpOct < 1 || tmpOct > 8) {
+        err = ERR_MML; 
+        return;       
+      }
+      oct = tmpOct;
+    } else if (*ptr == 'R') { // 休符
+      ptr++;      
+      // 長さの指定
+      uint16_t tmpLen =0;
+      char* tmpPtr = ptr;
+      while(isdigit(*ptr)) {
+         tmpLen*= 10;
+         tmpLen+= *ptr - '0';
+         ptr++;
+      }
+      if (tmpPtr != ptr) {
+        // 長さ引数ありの場合、長さを評価
+        switch(tmpLen) {
+          case 1: case 2:  case 4: case 8: case 16: case 32: case 64:
+            local_len = tmpLen;
+            break;
+          default: // 長さ指定エラー
+            err = ERR_MML; 
+            return;
+        }
+      }       
+      if (*ptr == '.') {
+        ptr++;
+        flgExtlen = 1;
+      } 
+
+      // 休符の再生
+      duration = 240000/tempo/local_len;    // 再生時間(msec)
+      if (flgExtlen)
+        duration += duration>>1;
+      delay(duration);
+    } else if (*ptr == '<') { // 1オクターブ上げる
+      if (oct < 8) {
+        oct++;
+      }
+      ptr++;
+    } else if (*ptr == '>') { // 1オクターブ下げる
+      if (oct > 1) {
+        oct--;
+      }
+      ptr++;
+    } else if (*ptr == 'T') { // テンポの指定
+      ptr++;      
+      // 長さの指定
+      uint32_t tmpTempo =0;
+      char* tmpPtr = ptr;
+      while(isdigit(*ptr)) {
+         tmpTempo*= 10;
+         tmpTempo+= *ptr - '0';
+         ptr++;
+      }
+      if (tmpPtr == ptr) {
+        err = ERR_MML; 
+        return;        
+      }
+      if (tmpTempo < 32 || tmpTempo > 255) {
+        err = ERR_MML; 
+        return;                
+      }
+      tempo = tmpTempo;
+    } else {
+      err = ERR_MML; 
+      return;              
+    }
+  }
 }
 
 // GPEEK(X,Y)関数の処理
@@ -3123,10 +3362,7 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
 
     case I_CHR: // CHR$()関数
       cip++; ichr(devno); break; // CHR$()関数
-/*
-      if (getParam(value, 0,255,false)) break;   // 括弧の値を取得
-      c_putch(value, devno);
-*/
+
      break;
 
     case I_HEX:  cip++; ihex(devno); break; // HEX$()関数
@@ -3246,6 +3482,10 @@ void iwidth() {
   if ( getParam(w,  16, SIZE_LINE, true) ) return;   // w
   if ( getParam(h,  10,  30, false) ) return;        // h
 
+  sc->cls();
+  sc->locate(0,0);
+  sc->end();
+  sc->init(w, h, SIZE_LINE, workarea); // スクリーン初期設定  
 }
 
 //
@@ -3441,7 +3681,7 @@ int16_t ivalue() {
       if (value < 0 )
         err = ERR_VALUE;
       else
-       value = getrnd(value); //乱数を取得
+       value = getrnd(value)-1; //乱数を取得
     }
     break;
 
@@ -4124,6 +4364,9 @@ unsigned char* iexe() {
     case I_MSG:       imsg();         break;  // MSG
     case I_TONE:      itone();        break;  // TONE
     case I_NOTONE:    inotone();      break;  // NOTONE
+    case I_SETTONE:   isettone();     break;  // SETTONE
+    case I_PLAY:      iplay();        break;  // PLAY
+    case I_TEMPO:     itempo();       break;  // TEMPO
     case I_CLV:       inew(2);        break;  // CLV 変数領域消去
     case I_INFO:      iinfo();        break;  // システム情報の表示(デバッグ用)
     case I_LRUN:       ilrun();       break;   

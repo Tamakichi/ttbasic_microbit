@@ -31,6 +31,7 @@ enum ErrorInfo {
   ERR_GPIO,                 // 追加 V0.83
   ERR_NOT_SUPPORTED,        // 追加 V0.84
   ERR_NP_NOT_START,         // micro:bit V0.05で追加
+  ERR_MML,                  // micro:bit V0.06で追加
 };
 
 extern const char* errmsg[];

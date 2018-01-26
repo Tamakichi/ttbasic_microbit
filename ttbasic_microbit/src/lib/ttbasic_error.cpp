@@ -35,6 +35,7 @@ const char* errmsg[] /*__FLASH__*/ = {
   "Line too long",
   "Cannot use GPIO function",// 追加
   "Not supported",           // 追加
-  "Neopixel not start",       // micro:bit V0.05で追加
+  "Neopixel not start",      // micro:bit V0.05で追加
+  "Illegal MML",             // micro:bit V0.06で追加
   
 };

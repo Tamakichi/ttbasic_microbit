@@ -153,10 +153,13 @@ void Adafruit_Microbit_Matrix::drawPixel(int16_t x, int16_t y, uint16_t color) {
   uint8_t row = pixel_to_row[pixelnum] - 1;
   //Serial.print("Setting row "); Serial.print(row); Serial.print(" & col "); Serial.println(col);
 
-  if(color) 
+  // 2018/1/24 modified by Tamakichi
+  if(color == 1) 
     matrix_buffer[row][col] = 1;
-  else
+  else if(color == 0) 
     matrix_buffer[row][col] = 0;
+  else if(color == 2) 
+    matrix_buffer[row][col] = matrix_buffer[row][col] ? 0:1; 
 }
 
 // 2017/12/28 add by ‚½‚Ü‹g
