@@ -4,6 +4,9 @@
 // 修正日 2017/08/05 ファンクションキーをNTSC版同様に利用可能対応
 // 修正日 2017/08/12 edit_scrollUp() で最終行が2行以上の場合の処理ミス修正
 // 修正日 2017/10/15 定義競合のためKEY_F1、KEY_F(n)をKEY_Fn1、KEY_Fn(n)変更
+// 修正日 2018/01/30 制御キーのキーコード変更、全角（シフトJIS)対応
+// 修正日 2018/01/30 [F7]:行の分割、[F8]:行の結合操作の追加
+// 修正日 2018/02/02 editLine()の追加
 
 #include <string.h>
 #include <stdlib.h>
@@ -16,6 +19,33 @@
 #endif
 
 char c_isdigit(char c);
+
+
+// http://katsura-kotonoha.sakura.ne.jp/prog/c/tip00010.shtml
+//*********************************************************
+// 文字列 str の str[nPos] について、
+//   ０ …… １バイト文字
+//   １ …… ２バイト文字の一部（第１バイト）
+//   ２ …… ２バイト文字の一部（第２バイト）
+// のいずれかを返す。
+//*********************************************************
+#define jms1(c) (((0x81<=c)&&(c<=0x9F))||((0xE0<=c)&&(c<=0xFC))) 
+#define jms2(c) ((0x7F!=c)&&(0x40<=c)&&(c<=0xFC))
+int isJMS( uint8_t *str, uint16_t nPos ) {
+	int i;
+	int state; // { 0, 1, 2 }
+
+	state = 0;
+	for( i = 0; str[i] != '\0'; i++ )	{
+		if      ( ( state == 0 ) && ( jms1( str[i] ) ) ) state = 1; // 0 -> 1
+		else if ( ( state == 1 ) && ( jms2( str[i] ) ) ) state = 2; // 1 -> 2
+		else if ( ( state == 2 ) && ( jms1( str[i] ) ) ) state = 1; // 2 -> 1
+		else                                             state = 0; // 2 -> 0, その他
+		// str[nPos] での状態を返す。
+		if ( i == nPos ) return state;
+	}
+	return 0;
+}//isJMS
 
 // スクリーンの初期設定
 // 引数
@@ -93,12 +123,11 @@ void tscreenBase::refresh() {
   MOVE(pos_y, pos_x);
 }
 
-// 行のリフレッシュ表示
 void tscreenBase::refresh_line(uint16_t l) {
   CLEAR_LINE(l);
   for (uint16_t j = 0; j < width; j++) {
     if( IS_PRINT( VPEEK(j,l) )) { 
-      WRITE(j,l,VPEEK(j,l));
+      WRITE(VPEEK(j,l));
     }
   }
 }
@@ -130,20 +159,109 @@ void tscreenBase::Insert_newLine(uint16_t l) {
   INSLINE(l+1);
 }
 
-// 現在のカーソル位置の文字削除
+// 指定行を削除
+void tscreenBase::deleteLine(uint16_t l) {
+  if (l < height-1) {
+    memmove(&VPEEK(0,l), &VPEEK(0,l+1), width*(height-1-l));
+  }
+  memset(&VPEEK(0,height-1), 0, width);
+  refresh();
+}
+
+// カーソル位置で行を分割する
+void tscreenBase::splitLine() {
+  uint8_t* start_adr = &VPEEK(pos_x,pos_y); // 現在位置のアドレス取得
+  uint8_t* top = start_adr;                 // 分割する文字列の先頭
+  uint16_t ln = 0;                          // 分割する文字列長さ
+  uint16_t insLine = 0;                     // 挿入する行数
+  
+  if (!*top) // 0文字分割不能
+    return;
+  
+  while( *top ) { ln++; top++; } // 行端,長さ調査
+  if (pos_x+ln > width-1) 
+    ln = width - pos_x;
+  
+  insLine = ln/width + 1;        // 下に挿入する行数
+  if (pos_y + insLine > height-1) {
+    return; // 分割不能
+  }
+  
+  // 下の行に空白挿入
+  for (uint8_t i = 0; i < insLine; i++) {
+    Insert_newLine(pos_y);
+  }
+  
+  // 分割行の移動
+  memmove(&VPEEK(0,pos_y+1), start_adr, ln);
+  
+  // 移動元の消去
+  memset(start_adr,0,ln);
+  
+  refresh(); 
+}  
+
+// 現在行の末尾に次の行を結合する
+void tscreenBase::margeLine() {
+  if (pos_y >= height-1)
+    return;
+  
+  uint8_t* start_adr = &VPEEK(0,pos_y);       // 現在位置のアドレス取得
+  uint8_t* top = start_adr;                   // 行末の先頭
+  uint16_t ln = 0;                            // 結合先文字列長さ
+  while( *top ) { ln++; top++; }              // 行端,長さ調査
+  
+  if (ln > width)
+    return;
+  
+  uint8_t* next_start_adr = &VPEEK(0,pos_y+1);   // 次の行の先頭のアドレス取得
+  uint8_t* next_top = next_start_adr;            // 次の行の行末の先頭
+  uint16_t next_ln = 0;                          // 次の行の結合する文字列長さ
+  while( *next_top ) { next_ln++; next_top++; }  // 行端,長さ調査
+  uint16_t offset = 0;
+  if (ln + next_ln >= width) {
+    offset = width - ln ;
+  }  
+    
+  // 行の結合
+  memmove(top, next_start_adr, next_ln);
+  
+  // 結合元のデータ消去
+  if (offset)
+    memset(next_start_adr+next_ln-offset, 0,offset);
+  else
+    memset(next_start_adr, 0,+next_ln);
+  refresh(); 
+}
+
+// 現在のカーソル位置の文字削除(全角対応)
+
 void tscreenBase::delete_char() {
   uint8_t* start_adr = &VPEEK(pos_x,pos_y);
   uint8_t* top = start_adr;
   uint16_t ln = 0;
 
-  if (!*top) // 0文字削除不能
-    return;
-  
-  while( *top ) { ln++; top++; } // 行端,長さ調査
-  if ( ln > 1 ) {
-    memmove(start_adr, start_adr + 1, ln-1); // 1文字詰める
+  if (!*top) {
+    if (pos_y < height-1 && pos_x == 0) {
+       // 空白行を詰める
+      deleteLine(pos_y);
+      refresh();
+      return;
+    } else {
+       return; // 0文字削除不能
+    }
   }
-  *(top-1) = 0; 
+    
+  while( *top ) { ln++; top++; } // 行端,長さ調査
+  if (isShiftJIS(*start_adr) && ln>=2) {
+    memmove(start_adr, start_adr + 2, ln-2); // 2文字詰める
+    *(top-1) = 0;
+    *(top-2) = 0;
+  } else if ( ln >=1 ) {
+    memmove(start_adr, start_adr + 1, ln-1); // 1文字詰める
+    *(top-1) = 0; 
+  }
+
   for (uint8_t i=0; i < (pos_x+ln)/width+1; i++)
     refresh_line(pos_y+i);   
   MOVE(pos_y,pos_x);
@@ -152,18 +270,33 @@ void tscreenBase::delete_char() {
 
 // 文字の出力
 void tscreenBase::putch(uint8_t c) {
- VPOKE(pos_x, pos_y, c); // VRAMへの書込み
- WRITE(pos_x, pos_y, c); // スクリーンへの書込み
- movePosNextNewChar();
+  VPOKE(pos_x, pos_y, c); // VRAMへの書込み
+  WRITE(c);
+  movePosNextNewChar();
 }
 
+// 文字の出力（シフトJIS対応)
+void tscreenBase::putwch(uint16_t c) {
+  if (c>0xff) {
+   VPOKE(pos_x, pos_y, c>>8); // VRAMへの書込み
+   VPOKE(pos_x+1, pos_y, c&0xff); // VRAMへの書込み
+   WRITE(c>>8); WRITE(c&0xff);
+   
+   movePosNextNewChar();
+   movePosNextNewChar();
+  } else {
+   VPOKE(pos_x, pos_y, c); // VRAMへの書込み
+   WRITE(c);
+   movePosNextNewChar();
+  }  
+}
 
-// 現在のカーソル位置に文字を挿入
-void tscreenBase::Insert_char(uint8_t c) {  
+void tscreenBase::Insert_char(uint16_t c) {  
   uint8_t* start_adr = &VPEEK(pos_x,pos_y);
   uint8_t* last = start_adr;
-  uint16_t ln = 0;  
-
+  uint16_t ln = 0;
+  uint8_t clen = (c>0xff) ? 2:1 ; // 文字バイト数
+  
   // 入力位置の既存文字列長(カーソル位置からの長さ)の参照
   while( *last ) {
     ln++;
@@ -171,7 +304,7 @@ void tscreenBase::Insert_char(uint8_t c) {
   }
   if (ln == 0 || flgIns == false) {
      // 文字列長さが0または上書きモードの場合、そのまま1文字表示
-    if (pos_y + (pos_x+ln+1)/width >= height) {
+    if (pos_y + (pos_x+ln+clen)/width >= height) {
       // 最終行を超える場合は、挿入前に1行上にスクロールして表示行を確保
       scroll_up();
       start_adr-=width;
@@ -180,22 +313,30 @@ void tscreenBase::Insert_char(uint8_t c) {
        // 画面左端に1文字を書く場合で、次行と連続でない場合は下の行に1行空白を挿入する
        Insert_newLine(pos_y+(pos_x+ln)/width);       
     }
-    putch(c);
+    putwch(c);
   } else {
      // 挿入処理が必要の場合
-    if (pos_y + (pos_x+ln+1)/width >= height) {
+    if (pos_y + (pos_x+ln+clen)/width >= height) {
       // 最終行を超える場合は、挿入前に1行上にスクロールして表示行を確保
       scroll_up();
       start_adr-=width;
       MOVE(pos_y-1, pos_x);
-    } else  if ( ((pos_x + ln +1)%width == width-1) && !VPEEK(pos_x + ln , pos_y) ) {
+    } else  if ( ((pos_x + ln +clen)%width == width-clen) && !VPEEK(pos_x + ln , pos_y) ) {
        // 画面左端に1文字を書く場合で、次行と連続でない場合は下の行に1行空白を挿入する
           Insert_newLine(pos_y+(pos_x+ln)/width);
     }
     // 1文字挿入のために1文字分のスペースを確保
-    memmove(start_adr+1, start_adr, ln);
-    *start_adr=c; // 確保したスペースに1文字表示
-    movePosNextNewChar();
+    memmove(start_adr+clen, start_adr, ln);
+    if (clen ==1) {
+      *start_adr=c; // 確保したスペースに1文字表示
+      movePosNextNewChar();
+
+    } else {
+      *start_adr     = (c>>8);   // 確保したスペースに1バイト目
+      *(start_adr+1) = c & 0xff; // 確保したスペースに2バイト目
+      movePosNextNewChar();
+      movePosNextNewChar();
+    }
     
     // 挿入した行の再表示
     for (uint8_t i=0; i < (pos_x+ln)/width+1; i++)
@@ -203,7 +344,6 @@ void tscreenBase::Insert_char(uint8_t c) {
     MOVE(pos_y,pos_x);
   }
 }
-
 
 // 改行
 void tscreenBase::newLine() {
@@ -235,39 +375,70 @@ void tscreenBase::movePosNextNewChar() {
 // カーソルを1文字分前に移動
 void tscreenBase::movePosPrevChar() {
   if (pos_x > 0) {
-    if ( IS_PRINT(VPEEK(pos_x-1 , pos_y))) {
-       MOVE(pos_y, pos_x-1);
+    if ( IS_PRINT(VPEEK(pos_x-1 , pos_y)) ) {
+        // 1つ前の文字が全角2バイト目かをチェック
+        if ( (pos_x -2 >= 0) && (isJMS(&VPEEK(0,pos_y),pos_x-1) !=2 ) ) {
+          MOVE(pos_y, pos_x-1);
+        } else if ( (pos_x -2 >= 0) && isShiftJIS(VPEEK(pos_x-2 , pos_y)) ) {
+          // 全角文字対応
+          MOVE(pos_y, pos_x-2);
+        } else {
+          MOVE(pos_y, pos_x-1);
+        }
     }
   } else {
    if(pos_y > 0) {
-      if (IS_PRINT(VPEEK(width-1, pos_y-1))) {
-         MOVE(pos_y-1, width - 1);
+      if ( IS_PRINT(VPEEK(width-1, pos_y-1)) ) {
+        if ( isShiftJIS(VPEEK(width-2 , pos_y-1)) ) {
+          // 全角文字対応
+          MOVE(pos_y-1, width - 2);
+        } else {
+          MOVE(pos_y-1, width - 1);
+        }
       } 
-   }    
+    }
   }
 }
 
-// カーソルを1文字分次に移動
+// カーソルを1文字分次に移動(全角対応)
 void tscreenBase::movePosNextChar() {
   if (pos_x+1 < width) {
     if ( IS_PRINT( VPEEK(pos_x ,pos_y)) ) {
-      MOVE(pos_y, pos_x+1);
+      if ( isShiftJIS(VPEEK(pos_x ,pos_y)) ) {
+        // 現在位置が全角1バイト目の場合,2バイト分移動する
+        if (pos_x+2 < width) {
+          MOVE(pos_y, pos_x+2);
+        } else {
+          if (pos_y+1 < height) {
+            if ( IS_PRINT(VPEEK(0, pos_y + 1)) ) {
+              MOVE(pos_y+1, 0);
+            }
+          }
+        }
+      } else { 
+        MOVE(pos_y, pos_x+1);
+      }
     }
   } else {
     if (pos_y+1 < height) {
-        if ( IS_PRINT( VPEEK(0, pos_y + 1)) ) {
-          MOVE(pos_y+1, 0);
-        }
+      if ( IS_PRINT(VPEEK(0, pos_y + 1)) ) {
+        MOVE(pos_y+1, 0);
+      }
     }
   }
 }
 
-// カーソルを次行に移動
+// カーソルを次行に移動(全角対応)
 void tscreenBase::movePosNextLineChar() {
   if (pos_y+1 < height) {
     if ( IS_PRINT(VPEEK(pos_x, pos_y + 1)) ) {
       // カーソルを真下に移動
-      MOVE(pos_y+1, pos_x);
+      if ( (isJMS(&VPEEK(0,pos_y+1),pos_x) == 2) &&  (pos_x > 0) ) {
+         // 真下が全角2バイト目の場合、全角1バイト目にカーソルを移動する 
+         MOVE(pos_y+1, pos_x-1);
+      } else {
+         MOVE(pos_y+1, pos_x);
+      }
     } else {
       // カーソルを次行の行末文字に移動
       int16_t x = pos_x;
@@ -278,22 +449,31 @@ void tscreenBase::movePosNextLineChar() {
           x--;
         else
           break;
-      }      
-      MOVE(pos_y+1, x);      
+      }
+      if ( !isShiftJIS(VPEEK(x ,pos_y+1)) && x > 0 && isShiftJIS(VPEEK(x-1 ,pos_y+1)) ) {
+         MOVE(pos_y+1, x-1);
+       } else {
+         MOVE(pos_y+1, x);      
+       }
     }
   } else if (pos_y+1 == height) {
     edit_scrollUp();    
   }
 }
 
-// カーソルを前行に移動
+// カーソルを前行に移動(全角対応)
 void tscreenBase::movePosPrevLineChar() {
   if (pos_y > 0) {
     if ( IS_PRINT(VPEEK(pos_x, pos_y-1)) ) {
       // カーソルを真上に移動
-      MOVE(pos_y-1, pos_x);
+      if ( (isJMS(&VPEEK(0,pos_y-1),pos_x) == 2) &&  (pos_x > 0) ) {
+         // 真上が全角2バイト目の場合、全角1バイト目にカーソルを移動する 
+         MOVE(pos_y-1, pos_x-1);
+      } else {
+         MOVE(pos_y-1, pos_x);
+      }
     } else {
-      // カーソルを前行の行末文字に移動
+      // カーソルの真上に文字が無い場合は、前行の行末文字に移動する
       int16_t x = pos_x;
       while(1) {
         if (IS_PRINT(VPEEK(x, pos_y - 1)) ) 
@@ -303,7 +483,12 @@ void tscreenBase::movePosPrevLineChar() {
         else
           break;
       }      
-      MOVE(pos_y-1, x);      
+      if ( !isShiftJIS(VPEEK(x ,pos_y-1)) && (x > 0) && isShiftJIS(VPEEK(x-1 ,pos_y-1)) ) {
+         // 行末が全角2バイト目の場合、カーソルを全角1バイト目に移動する
+         MOVE(pos_y-1, x-1);
+       } else {
+         MOVE(pos_y-1, x);      
+       }
     }
   } else if (pos_y == 0){
     edit_scrollDown();
@@ -320,7 +505,11 @@ void tscreenBase::moveLineEnd() {
       x--;
     else
       break;
-  }        
+  }
+  if (x>1 && (isJMS(&VPEEK(0,pos_y),x) == 2) ) {
+    // シフトJIS２バイト目の場合、カーソルを１バイト目に移動する 
+    x--;
+  }
   MOVE(pos_y, x);     
 }
 
@@ -463,30 +652,43 @@ uint8_t tscreenBase::edit_scrollDown() {
   return 0;
 }
 
+// 文字の取得（シフトJIS対応)
+uint16_t tscreenBase::get_wch() {
+  uint8_t ch1,ch2;           // 入力文字
+  uint16_t wch;              // 2バイト文字コード
+  ch1 = get_ch();
+  if (isShiftJIS(ch1)) {
+     ch2 = get_ch();
+     wch = ch1<<8 | ch2;
+  } else {
+    wch = ch1;
+  }
+  return wch;
+}
+
 // スクリーン編集
 uint8_t tscreenBase::edit() {
-  uint8_t ch;  // 入力文字
+  uint16_t ch;  // 入力文字  
   do {
-    //MOVE(pos_y, pos_x);
-    ch = get_ch ();
+    ch = get_wch();   
     show_curs(false);
     switch(ch) {
-      case KEY_CR:         // [Enter]キー
+      case SC_KEY_CR:         // [Enter]キー
         show_curs(true);
         return enter_text();
         break;
 
-      case SC_KEY_CTRL_L:  // [CTRL+L] 画面クリア
-      case KEY_Fn(1):      // F1
+      //case SC_KEY_CTRL_L:  // [CTRL+L] 画面クリア
+      case SC_KEY_F1:        // F1
         cls();
         locate(0,0);
         break;
  
-      case KEY_HOME:      // [HOMEキー] 行先頭移動
+      case SC_KEY_HOME:      // [HOMEキー] 行先頭移動
         locate(0, pos_y);
         break;
         
-      case KEY_NPAGE:      // [PageDown] 表示プログラム最終行に移動
+      case SC_KEY_NPAGE:      // [PageDown] 表示プログラム最終行に移動
         if (pos_x == 0 && pos_y == height-1) {
           edit_scrollUp();
         } else {
@@ -494,7 +696,7 @@ uint8_t tscreenBase::edit() {
         }
         break;
       
-      case KEY_PPAGE:     // [PageUP] 画面(0,0)に移動
+      case SC_KEY_PPAGE:     // [PageUP] 画面(0,0)に移動
         if (pos_x == 0 && pos_y == 0) {
           edit_scrollDown();
         } else {
@@ -502,56 +704,64 @@ uint8_t tscreenBase::edit() {
         }  
         break;
         
-      case SC_KEY_CTRL_R:  // [CTRL_R] 画面更新
-      case KEY_Fn(5):      // F5
+      //case SC_KEY_CTRL_R:   // [CTRL_R] 画面更新
+      case SC_KEY_F5:         // F5
         //beep();
         refresh();  break;
 
-      case KEY_END:       // [ENDキー] 行の右端移動
+      case SC_KEY_END:        // [ENDキー] 行の右端移動
          moveLineEnd();
          break;
 
-      case KEY_IC:         // [Insert]キー
+      case SC_KEY_IC:         // [Insert]キー
         flgIns = !flgIns;
         break;        
 
-      case KEY_BACKSPACE:  // [BS]キー
+      case SC_KEY_BACKSPACE:  // [BS]キー
         movePosPrevChar();
         delete_char();
         break;        
 
-      case KEY_DC:         // [Del]キー
+      case SC_KEY_DC:         // [Del]キー
       case SC_KEY_CTRL_X:
         delete_char();
         break;        
       
-      case KEY_RIGHT:      // [→]キー
+      case SC_KEY_RIGHT:      // [→]キー
         movePosNextChar();
         break;
 
-      case KEY_LEFT:       // [←]キー
+      case SC_KEY_LEFT:       // [←]キー
         movePosPrevChar();
         break;
 
-      case KEY_DOWN:       // [↓]キー
+      case SC_KEY_DOWN:       // [↓]キー
         movePosNextLineChar();
         break;
       
-      case KEY_UP:         // [↑]キー
+      case SC_KEY_UP:         // [↑]キー
         movePosPrevLineChar();
         break;
 
-      case SC_KEY_CTRL_N:  // 行挿入
-      case KEY_Fn(3):      // F3
+      //case SC_KEY_CTRL_N:  // 行挿入
+      case SC_KEY_F3:        // F3
         Insert_newLine(pos_y);       
         break;
 
-      case SC_KEY_CTRL_D:  // 行削除
-      case KEY_Fn(2):      // F2
+      //case SC_KEY_CTRL_D:  // 行削除
+      case SC_KEY_F2:        // F2
         clerLine(pos_y);
         break;
 
-      default:             // その他
+      case SC_KEY_F7:        // F7 行の分割
+        splitLine();
+        break;
+
+      case SC_KEY_F8:        // F8 行の結合
+        margeLine();
+        break;
+      
+      default:               // その他
       
       if (IS_PRINT(ch)) {
         Insert_char(ch);
@@ -561,4 +771,61 @@ uint8_t tscreenBase::edit() {
     show_curs(true);
   } while(1);
    show_curs(true);
+}
+
+// ライン編集
+// 中断の場合、0を返す
+uint8_t tscreenBase::editLine() {
+  uint16_t basePos_x = pos_x;
+  uint16_t basePos_y = pos_y;
+  uint16_t ch;  // 入力文字  
+  
+  show_curs(true);
+  do {
+    ch = get_wch();   
+    switch(ch) {
+      case SC_KEY_CR:         // [Enter]キー
+        show_curs(false);
+        text = &VPEEK(basePos_x, basePos_y);
+        return 1;
+        break;
+ 
+      case SC_KEY_HOME:      // [HOMEキー] 行先頭移動
+        locate(basePos_x, basePos_y);
+        break;
+        
+      //case SC_KEY_CTRL_R:   // [CTRL_R] 画面更新
+      case SC_KEY_F5:         // F5
+        //beep();
+        refresh();  break;
+
+      case SC_KEY_END:        // [ENDキー] 行の右端移動
+         moveLineEnd();
+         break;
+
+      case SC_KEY_IC:         // [Insert]キー
+        flgIns = !flgIns;
+        break;        
+
+      case SC_KEY_BACKSPACE:  // [BS]キー
+        movePosPrevChar();
+        delete_char();
+        break;        
+
+      case SC_KEY_DC:         // [Del]キー
+      case SC_KEY_CTRL_X:
+        delete_char();
+        break;        
+    
+      case SC_KEY_CTRL_C:   // [CTRL_C] 中断
+      case SC_KEY_ESCAPE:
+        return 0;
+
+      default:               // その他
+        if (ch >= 0x20) {
+          Insert_char(ch);
+        }  
+        break;
+    }
+  } while(1);
 }

@@ -23,6 +23,13 @@
 // 2018/01/24 RND()の不具合対応 RND(N)は0～N-1の範囲とする
 // 2018/01/25 TONE,NOTONE,SETTONEコマンドの追加
 // 2018/01/26 PLAY,TEMPOコマンドの追加
+// 2018/01/30 スクリーンエディタで全角シフトJIS対応、制御キーのコード変更
+// 2018/01/30 LIST出力で定数、通知が並ぶ場合、間にスペースを入れて表示に修正(新:IF X=CW X=X=1 旧:IF X=CWX=X=1)
+// 2018/02/01 BIN$()の不具合対応(0の場合何も表示されなかった)
+// 2018/02/01 美咲フォント教育漢字の追加(FNT2)
+// 2018/02/02 全角文字列用関数の追加WASC(),WCHAR$(),WADR(),WSTR$(),WLEN()
+// 2018/02/02 文字列入力関数GETS()
+// 2018/02/02 MATRIX OFF次にポート26,27,28をLOWにつる対応(tMatrixScreen.cpp)
 
 #include <Arduino.h>
 #include <stdint.h>
@@ -35,7 +42,7 @@
 #include "src/lib/tTermscreen.h"    // シリアルコンソールクラス
 
 #define STR_EDITION "Arduino micro:bit"
-#define STR_VARSION "Edition V0.06"
+#define STR_VARSION "Edition V0.07"
 
 // TOYOSHIKI TinyBASIC プログラム利用域に関する定義
 #define SIZE_LINE 254    // コマンドライン入力バッファサイズ + NULL
@@ -69,7 +76,7 @@ const uint8_t* ttbasic_font = pcgfont;
 uint16_t f_width  = *(DEVICE_FONT+0);
 uint16_t f_height = *(DEVICE_FONT+1);
 
-// フォントアドレスの取得
+// LEDマトリッス5x5ドット フォントアドレスの取得
 inline uint8_t* getFontAdr() {
   return (uint8_t*)ttbasic_font;
 }
@@ -79,22 +86,15 @@ void copyFont2PCG() {
   memcpy(pcgfont,DEVICE_FONT,SIZE_PCG);
 }
 
+// *** 美咲フォント ***************
+#include <misakiSJIS.h>
+uint8_t* misaki_font; // 美咲フォント先頭アドレス
+
 // **** スクリーン管理 *************
 #define CON_MODE_DEVICE    0        // コンソールモード デバイス
 #define CON_MODE_SERIAL    1        // コンソールモード シリアル
 #define SCSIZE_MODE_SERIAL 0        // スクリーンサイズモード指定なし（シリアルコンソールモード）
 uint8_t* workarea = NULL;           // 画面用動的獲得メモリ
-
-char c_isalpha(char c) {
-  return ((c <= 'z' && c >= 'a') || (c <= 'Z' && c >= 'A'));
-}
-char c_isdigit(char c) {
-  return(c <= '9' && c >= '0');
-}
-
-char isHexadecimalDigit(char c) {
-  return ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9'));
-}
 
 void initScreenEnv();
 tscreenBase* sc;   // 利用デバイススクリーン用ポインタ
@@ -189,18 +189,15 @@ const uint8_t mml_scaleBase[] = {
   MML_A_BASE,MML_B_BASE,MML_C_BASE,MML_D_BASE,MML_E_BASE,MML_F_BASE,MML_G_BASE,
 };
 
-
-// **** PWM用設定 ********************
-#define TIMER_DIV (F_CPU/1000000L)
-
 // **** 仮想メモリ定義 ****************
 #define V_VRAM_TOP  0x0000
-#define V_VAR_TOP   0x1900 // V0.84で変更
-#define V_ARRAY_TOP 0x1AA0 // V0.84で変更
-#define V_PRG_TOP   0x1BA0 // V0.84で変更
-#define V_MEM_TOP   0x2BA0 // V0.84で変更
-#define V_FNT_TOP   0x2FA0 // V0.84で変更
-#define V_GRAM_TOP  0x37A0 // V0.84で変更
+#define V_VAR_TOP   0x1900
+#define V_ARRAY_TOP 0x1AA0
+#define V_PRG_TOP   0x1BA0
+#define V_MEM_TOP   0x2BA0
+#define V_FNT_TOP   0x2FA0
+#define V_GRAM_TOP  0x37A0
+#define V_FNT2_TOP  0x38A0 // V0.07で追加
 
 // 定数
 #define CONST_HIGH   1
@@ -247,6 +244,25 @@ inline uint8_t IsUseablePin(uint8_t pinno, uint8_t fnc) {
 // Terminal control(文字の表示・入力は下記の3関数のみ利用)
 #define c_getch( ) sc->get_ch()
 #define c_kbhit( ) sc->isKeyIn()
+
+// アルファベット判定
+char c_isalpha(char c) {
+  return ((c <= 'z' && c >= 'a') || (c <= 'Z' && c >= 'A'));
+}
+// 数字判定
+char c_isdigit(char c) {
+  return(c <= '9' && c >= '0');
+}
+
+// 16進数判定
+char isHexadecimalDigit(char c) {
+  return ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9'));
+}
+
+// 全角判定
+inline uint8_t isZenkaku(char c){
+   return (((c>=0x81)&&(c<=0x9f))||((c>=0xe0)&&(c<=0xfc))) ? 1:0;
+}
 
 // 指定デバイスへの文字の出力
 //  c     : 出力文字
@@ -296,7 +312,8 @@ const char *kwtbl[] = {
  // GPIO・入出力関連コマンド(5)
  "GPIO", "OUT", "POUT", "SHIFTOUT", "PULSEIN",                  
 
- "HIGH", "LOW", "ON", "OFF",  // 定数
+ // 定数
+ "HIGH", "LOW", "ON", "OFF",  
 
  //ピンの定義
  "PN0", "PN1", "PN2", "PN3", "PN4", "PN5", "PN6", "PN7", "PN8", "PN9",
@@ -305,7 +322,7 @@ const char *kwtbl[] = {
  "PN30","PN31", "PN32", "BTNA", "BTNB",
  
  "CW", "CH","GW","GH", "LSB", "MSB",
- "MEM", "VRAM", "VAR", "ARRAY","PRG","FNT","GRAM",
+ "MEM", "VRAM", "VAR", "ARRAY","PRG","FNT","GRAM","FNT2",
  "UP", "DOWN", "RIGHT", "LEFT","TOP",
  
  // ピンモードの定義
@@ -322,6 +339,10 @@ const char *kwtbl[] = {
  "CLP","SETFONT", // PCGコマンド(2)
 
  "GRADE", // 等級判定関数
+ "KUP", "KDOWN", "KRIGHT", "KLEFT", "KSPACE", "KENTER",  // キーボードコード
+
+ "WLEN","WSTR$","WASC","WCHR$","WADR",     // 全角文字列関数
+ "GETS", // 文字列入力
  
  "RENUM", "RUN", "DELETE", "OK",           // システムコマンド(4)
 };
@@ -331,13 +352,17 @@ const char *kwtbl[] = {
 
 // i-code(Intermediate code) assignment
 enum ICode:uint8_t { 
-  I_GOTO, I_GOSUB, I_RETURN, I_FOR, I_TO, I_STEP, I_NEXT, I_IF, I_END, I_ELSE,                          // 制御命令(10)
-  I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_APOST,  // 演算子・記号(31)
+  // 制御命令(10)
+  I_GOTO, I_GOSUB, I_RETURN, I_FOR, I_TO, I_STEP, I_NEXT, I_IF, I_END, I_ELSE,                          
+  // 演算子・記号(31)
+  I_COMMA, I_SEMI, I_COLON, I_SQUOT, I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_APOST,  
   I_LSHIFT, I_RSHIFT, I_OR, I_AND, I_GTE, I_SHARP, I_GT, I_EQ, I_LTE, I_NEQ, I_NEQ2, I_LT, I_LAND, I_LOR, I_LNOT,
   I_BITREV, I_XOR,  I_ARRAY, 
+
   I_WAIT,         // 時間待ち・時間計測コマンド(1)
   I_POKE,         // 記憶領域操作コマンド(1)
-  I_PRINT, I_QUEST, I_INPUT, I_CLS, I_COLOR, I_ATTR, I_LOCATE,  I_REFLESH, I_CSCROLL,  // キャラクタ表示コマンド(9)
+  // キャラクタ表示コマンド(9)
+  I_PRINT, I_QUEST, I_INPUT, I_CLS, I_COLOR, I_ATTR, I_LOCATE,  I_REFLESH, I_CSCROLL,  
   I_CHR, I_BIN, I_HEX, I_DMP, I_STRREF,   // 文字列関数(5)
   I_ABS, I_MAP, I_ASC, I_FREE, I_RND, I_INKEY, I_LEN,   // 数値関数(19)
   I_TICK, I_PEEK, I_VPEEK, I_GPEEK, I_GINP,
@@ -358,7 +383,7 @@ enum ICode:uint8_t {
 
   I_CW, I_CH, I_GW, I_GH,
   I_LSB, I_MSB, 
-  I_MEM, I_VRAM, I_MVAR, I_MARRAY,I_MPRG,I_MFNT,I_GRAM,
+  I_MEM, I_VRAM, I_MVAR, I_MARRAY,I_MPRG,I_MFNT,I_GRAM, I_MFNT2,
   I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
 
   // ピンモードの定義
@@ -375,7 +400,11 @@ enum ICode:uint8_t {
    
   I_CLP, I_SETFONT, // PCGコマンド(2)
   I_GRADE,  // 等級判定関数
-  
+
+  I_KUP, I_KDOWN, I_KRIGHT, I_KLEFT, I_KSPACE, I_KENTER,  // キーボードコード
+
+  I_WLEN,I_WSTR,I_WASC,I_WCHR,I_WADR,  // 全角文字列関数
+  I_GETS,  // 文字列入力
   I_RENUM, I_RUN, I_DELETE, I_OK,  // システムコマンド(4)
 
   // 内部利用コード
@@ -387,8 +416,11 @@ enum ICode:uint8_t {
 // 後ろに空白を入れない中間コード
 const uint8_t i_nsa[] = {
   I_RETURN, I_END, 
+
   I_HIGH, I_LOW,  I_ON, I_OFF,I_CW, I_CH, I_GW, I_GH, 
+  I_KUP, I_KDOWN, I_KRIGHT, I_KLEFT, I_KSPACE, I_KENTER,  // キーボードコード
   I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
+
   I_INKEY,I_VPEEK, I_CHR, I_ASC, I_HEX, I_BIN,I_LEN, I_STRREF,I_RGB, I_RGB8,
   I_COMMA, I_SEMI, I_COLON, I_SQUOT,I_QUEST,
   I_MINUS, I_PLUS, I_MUL, I_DIV, I_DIVR, I_OPEN, I_CLOSE, I_DOLLAR, I_APOST,I_LSHIFT, I_RSHIFT, I_OR, I_AND,
@@ -406,8 +438,9 @@ const uint8_t i_nsa[] = {
   I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
   I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
 
-  I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_MPRG, I_MFNT,I_GRAM,
+  I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_MPRG, I_MFNT,I_GRAM, I_MFNT2,
   I_GPEEK, I_GINP, I_GRADE,
+  I_WLEN,I_WSTR,I_WASC,I_WCHR,I_WADR,I_GETS,
 };
 
 // 前が定数か変数のとき前の空白をなくす中間コード
@@ -420,7 +453,7 @@ const uint8_t  i_nsb[] = {
 // 必ず前に空白を入れる中間コード
 const uint8_t i_sf[]  = {
   I_ATTR, I_CLS, I_COLOR, I_DATE, I_END, I_FILES, I_TO, I_STEP,I_QUEST,I_LAND, I_LOR,
-  I_GETDATE,I_GETTIME,I_GOSUB,I_GOTO,I_GPIO,I_INKEY,I_INPUT,I_LET,I_LIST,I_ELSE,
+  I_GETDATE,I_GETTIME,I_GOSUB,I_GOTO,I_GPIO,I_INPUT,I_LET,I_LIST,I_ELSE,
   I_LOAD,I_LOCATE,I_NEW,I_DOUT,I_POKE,I_PRINT,I_REFLESH,I_REM,I_RENUM,
   I_RETURN,I_RUN,I_SAVE,I_SETDATE,I_SHIFTOUT,I_WAIT,I_MSG,I_MATRIX,
   I_PSET, I_LINE, I_RECT, I_CIRCLE, I_BITMAP,
@@ -428,6 +461,22 @@ const uint8_t i_sf[]  = {
   I_ACCEL,I_NPX_BEGIN, I_NPX_END, I_NPX_CLS, I_NPX_SET,I_NPX_SHOW,
   I_NPX_RGB, I_NPX_PUT, I_NPX_LEVEL,
   I_CLP,I_SETFONT,
+};
+
+// 後ろが変数、数値、定数の場合、後ろに空白を空ける中間コード
+const uint8_t i_sb_if_value[] = {
+  I_HIGH, I_LOW,  I_ON, I_OFF,I_CW, I_CH, I_GW, I_GH, 
+  I_KUP, I_KDOWN, I_KRIGHT, I_KLEFT, I_KSPACE, I_KENTER,  // キーボードコード
+  I_UP, I_DOWN, I_RIGHT, I_LEFT, I_TOP,
+
+  //ピンの定義
+  I_PN0, I_PN1, I_PN2, I_PN3, I_PN4, I_PN5, I_PN6, I_PN7, I_PN8, I_PN9,
+  I_PN10,I_PN11, I_PN12, I_PN13,I_PN14,I_PN15, I_PN16, I_PN17, I_PN18, I_PN19, 
+  I_PN20,I_PN21, I_PN22, I_PN23,I_PN24,I_PN25, I_PN26, I_PN27, I_PN28, I_PN29, 
+  I_PN30,I_PN31, I_PN32, I_BTNA, I_BTNB,
+
+  I_LSB, I_MSB, I_MEM, I_VRAM, I_MVAR, I_MARRAY, I_MPRG, I_MFNT,I_GRAM, I_MFNT2,
+  I_NUM, I_STR, I_HEXNUM, I_BINNUM, I_VAR,
 };
 
 // 例外検索関数
@@ -443,6 +492,7 @@ inline char sstyle(uint8_t code,
 #define nospacea(c) sstyle(c, i_nsa, sizeof(i_nsa))  // 後ろに空白を入れない中間コードか？
 #define nospaceb(c) sstyle(c, i_nsb, sizeof(i_nsb))  // 前が定数か変数のとき前の空白をなくす中間コードか？
 #define spacef(c) sstyle(c, i_sf, sizeof(i_sf))      // 必ず前に空白を入れる中間コードか？
+#define spacebifValue(c) sstyle(c, i_sb_if_value, sizeof(i_sb_if_value))  // 後ろが変数、数値、定数の場合、後ろに空白を空ける中間コードか
 
 // エラーメッセージ定義
 uint8_t err;// Error message index
@@ -504,10 +554,12 @@ uint8_t* v2realAddr(uint16_t vadr) {
   } else if ((vadr >= V_GRAM_TOP) && (vadr < V_GRAM_TOP+27)) { // グラフィク表示用メモリ領域
 //      if ( scmode ) // 2017/10/27
 #if USE_MATRIX == 1
-      radr = vadr - V_GRAM_TOP + sc2.getGRAM();
+    radr = vadr - V_GRAM_TOP + sc2.getGRAM();
 #else
       radr = NULL;
 #endif
+  } else if ((vadr >= V_FNT2_TOP) && (vadr < V_FNT2_TOP+1710*8)) {  // フォント2領域
+    radr= vadr - V_FNT2_TOP + misaki_font;
   }
   return radr;
 }
@@ -539,7 +591,7 @@ char* tlimR(char* str) {
 }
 
 // コマンド引数取得(int16_t,引数チェックあり)
-inline uint8_t getParam(int16_t& prm, int16_t  v_min,  int16_t  v_max, uint8_t flgCmma) {
+inline uint8_t getParam(int16_t& prm, int16_t  v_min,int16_t v_max, uint8_t flgCmma) {
   prm = iexp(); 
   if (!err &&  (prm < v_min || prm > v_max)) 
     err = ERR_VALUE;
@@ -1207,8 +1259,9 @@ void putlist(unsigned char* ip, uint8_t devno=0) {
       c_puts(kwtbl[*ip],devno); //キーワードテーブルの文字列を表示
       if (*(ip+1) != I_COLON) 
         if ( ((!nospacea(*ip) || spacef(*(ip+1))) && (*ip != I_COLON) && (*ip != I_SQUOT))
-        || ((*ip == I_CLOSE)&& (*(ip+1) != I_COLON  && *(ip+1) != I_EOL && !nospaceb(*(ip+1)))) ) //もし例外にあたらなければ
-          c_putch(' ',devno); //空白を表示
+        || ((*ip == I_CLOSE)&& (*(ip+1) != I_COLON  && *(ip+1) != I_EOL && !nospaceb(*(ip+1)))) 
+        || ( spacebifValue(*ip) && spacebifValue(*(ip+1))) ) //もし例外にあたらなければ
+           c_putch(' ',devno); //空白を表示
 
       if (*ip == I_REM||*ip == I_SQUOT) { //もし中間コードがI_REMなら
         ip++; //ポインタを文字数へ進める
@@ -1841,11 +1894,8 @@ void idelete() {
 void ifiles() {
   uint32_t flash_adr;
   uint8_t* save_clp;
-
-  char* ptr = NULL;
-  uint8_t flgwildcard = 0;
   int16_t StartNo, endNo; // プログラム番号開始、終了
-  int16_t rc;  
+  
   // フラッシュメモリのプログラムリスト
   
   // 引数が数値または、無しの場合、フラッシュメモリのリスト表示
@@ -2035,43 +2085,6 @@ void idwrite() {
   digitalWrite(pinno, data);
 }
 
-//
-// PWM出力
-// 引数
-//   pin     PWM出力ピン
-//   freq    出力パルス周波数(0 ～ 65535)
-//   dcycle  デューティ比 (0～ 4095:4095で100%)
-// 戻り値
-//   0 正常
-//   1 異常(PWMを利用出来ないピンを利用した)
-//
-#if 0
-uint8_t pwm_out(uint8_t pin, uint16_t freq, uint16_t duty) {
-
-  uint32_t dc,f,base_div;
-  timer_dev *dev = PIN_MAP[pin].timer_device;     // ピン対応のタイマーデバイスの取得
-  uint8 cc_channel = PIN_MAP[pin].timer_channel;  // ピン対応のタイマーチャンネルの取得
-  if (! (dev && cc_channel) ) 
-    return 1;  
-    
-  if (freq >=2048) {
-    // 周波数が2048Hz以上の場合
-    f =1000000/(uint32_t)freq;     // 周波数をカウント値に換算
-    base_div = TIMER_DIV;
-  } else {
-    // 周波数が2048Hz未満の場合
-    f =1000000/16/(uint32_t)freq;  // 周波数をカウント値に換算
-    base_div = TIMER_DIV*16;
-  }
-  dc = f*(uint32_t)duty/4095;
-  timer_set_prescaler(dev, base_div);          // システムクロックを1MHzに分周
-  timer_set_reload(dev, f);                    // リセットカウント値を設定
-  timer_set_mode(dev, cc_channel,TIMER_PWM);
-  timer_set_compare(dev,cc_channel,dc);        // 比較レジスタの初期値指定(デューティ比 0)
-  return 0;
-}
-#endif
-
 // PWMコマンド
 // PWM ピン番号, DutyCycle
 void ipwm() {
@@ -2089,7 +2102,8 @@ void ipwm() {
   analogWrite(pinno, duty);
 }
 
-uint8_t pauseMatrix(uint8_t pause) {
+// LEDマトリックスの一時停止と停止解除
+void pauseMatrix(uint8_t pause) {
   if (isMatrixRunning()) {
     if (pause) {
        sc2.driveMatrix(0,0); 
@@ -2100,7 +2114,7 @@ uint8_t pauseMatrix(uint8_t pause) {
 }
 
 // neopixelの利用開始
-// NPX.BEGIN pinNo, LedNum
+// NPBEGIN pinNo, LedNum
 uint8_t m_flgNpxBegin = false;
 int16_t m_ledNum;
 int16_t m_NpxLevel = 0;
@@ -2128,7 +2142,7 @@ void iNpxBegin() {
 }
 
 // neopixelの利用終了
-// NPX.END 
+// NPEND 
 void iNpxEnd() {
   if (m_flgNpxBegin) {
     // NeoPixcel用の資源開放
@@ -2152,7 +2166,7 @@ void iNpxCls() {
 }
 
 // neopixel 色の設定
-// NPX.SET No, R, G, B[ ,0|1]
+// NPSET No, R, G, B[ ,0|1]
 void iNpxRGB() {
   int16_t ledNo;
   int16_t colR, colG, colB;
@@ -2180,7 +2194,7 @@ void iNpxRGB() {
 }
 
 // neopixel 輝度の設定
-// NP.LEVEL v
+// NPLEVEL v
 // v:3ビット 0～3
 void iNpxLevel() {
   int16_t level;
@@ -2228,7 +2242,7 @@ void iNpxPset() {
 }
 
 // neopixel ピクセルデータの転送
-// NPX.PUT No, Addr, len, nByte, [,0|1]
+// NPXPUT No, Addr, len, nByte, [,0|1]
 void iNpxPut() {
   int16_t ledNo;
   int16_t vadr;
@@ -2292,7 +2306,6 @@ void iNpxPut() {
      neopixel_show(&m_strip);
      pauseMatrix(0);  
   }  
-  
 }
 
 // neopixel 表示反映
@@ -2421,7 +2434,7 @@ void ihex(uint8_t devno=CDEV_SCREEN) {
 // 2進数出力 'BIN$(数値, 桁数)' or 'BIN$(数値)'
 void ibin(uint8_t devno=CDEV_SCREEN) {
   int16_t value; // 値
-  int16_t d = 0; // 桁数(0で桁数指定なし)
+  int16_t d = 1; // 桁数(0で桁数指定なし)
 
   if (checkOpen()) return;
   if (getParam(value,false)) return;  
@@ -2449,6 +2462,26 @@ void ichr(uint8_t devno=CDEV_SCREEN) {
   if (checkClose()) return;
 }
 
+// WCHR$
+void iwchr(uint8_t devno=CDEV_SCREEN) {
+  uint16_t value; // 値
+  if (checkOpen()) return;
+  for(;;) {
+    if (getParam(value,false)) return;
+    if (value <= 0xff) {
+       c_putch(value, devno);
+    } else {
+       c_putch(value>>8,  devno);
+       c_putch(value&0xff,devno);
+    }
+    if (*cip == I_COMMA) {
+       cip++;
+       continue;
+    }
+    break;
+  }
+  if (checkClose()) return;
+}
 
 // 小数点数値出力 DMP$(数値) or DMP(数値,小数部桁数) or DMP(数値,小数部桁数,整数部桁指定)
 void idmp(uint8_t devno=CDEV_SCREEN) {
@@ -2531,6 +2564,92 @@ void istrref(uint8_t devno=CDEV_SCREEN) {
   if (checkClose()) return;
   for (uint16_t i = top-1; i <top-1+n; i++) {
     c_putch(ptr[i], devno);
+  }
+  return;
+}
+
+// 文字列参照 WSTR$(変数)
+// WSTR(文字列参照変数|文字列参照配列変数|文字列定数,[pos,n])
+// ※変数,配列は　[LEN][文字列]への参照とする
+// 引数
+//  devno: 出力先デバイス番号
+// 戻り値
+//  なし
+//
+void iwstr(uint8_t devno=CDEV_SCREEN) {
+  int16_t len;  // 文字列長
+  int16_t top;  // 文字取り出し位置
+  int16_t n;    // 取り出し文字数
+  int16_t index;
+  uint8_t *ptr;  // 文字列先頭
+  
+  if (checkOpen()) return;
+  if (*cip == I_VAR) {
+    // 変数
+    cip++;
+    ptr = v2realAddr(var[*cip]);
+    len = *ptr;
+    ptr++;
+    cip++;
+  } else if (*cip == I_ARRAY) {
+    // 配列変数
+    cip++; 
+    if (getParam(index, 0, SIZE_ARRY-1, false)) return;
+    ptr = v2realAddr(arr[index]);
+    len = *ptr;
+    ptr++;    
+  } else if (*cip == I_STR) {
+    // 文字列定数
+    cip++;
+    len = *cip;
+    cip++;
+    ptr = cip;
+    cip+=len;    
+  } else {
+    err = ERR_SYNTAX;
+    return;
+  }
+  top = 1; // 文字取り出し位置
+  n = len; // 取り出し文字数
+  if (*cip == I_COMMA) {
+    // 引数：文字取り出し位置、取り出し文字数の取得 
+    cip++;
+    if (getParam(top, 1,len,true)) return;
+    if (getParam(n,1,len-top+1,false)) return;
+  }
+  if (checkClose()) return;
+
+  // 全角を考慮した文字位置の取得
+  int16_t i;
+  int16_t wtop = 1;
+  for (i=0; i < len; i++) {
+    if (wtop == top) {
+      break;
+    }
+    if (isZenkaku(ptr[i])) {
+      i++;  
+    }
+    wtop++;
+  }
+  if (wtop == top) {
+    //実際の取り出し位置
+    top = i+1;
+  } else {
+    err = ERR_VALUE;
+    return;
+  }
+  
+  // 全角を考慮した取り出し文字列の出力
+  int16_t cnt=0;
+  for (uint16_t i = top-1 ; i < len; i++) {
+    if (cnt == n) {
+      break;
+    }  
+    c_putch(ptr[i], devno);
+    if (isZenkaku(ptr[i])) {
+      i++; c_putch(ptr[i], devno);
+    }
+    cnt++;
   }
   return;
 }
@@ -2727,7 +2846,7 @@ void isetDate() {
   int16_t p_year, p_mon, p_day;
   int16_t p_hour, p_min, p_sec;
 
-  if ( getParam(p_year, 1900,2036, true) ) return; // 年
+  if ( getParam(p_year, 1970,2036, true) ) return; // 年
   if ( getParam(p_mon,     1,  12, true) ) return; // 月
   if ( getParam(p_day,     1,  31, true) ) return; // 日
   if ( getParam(p_hour,    0,  23, true) ) return; // 時
@@ -3030,7 +3149,7 @@ void iplay() {
   
   uint16_t tempo = mml_Tempo; // テンポ
   int8_t  scale = 0;          // 音階
-  uint8_t flgScale = 0;       // 音階記号フラグ
+  //uint8_t flgScale = 0;       // 音階記号フラグ
   uint32_t duration;          // 再生時間(msec)
   uint8_t flgExtlen = 0;
   
@@ -3300,8 +3419,8 @@ int16_t igrade() {
 // ASC(文字列)
 // ASC(文字列,文字位置)
 // ASC(変数,文字位置)
-int16_t iasc() {
-  int16_t value =0;
+int16_t iasc(uint8_t flgZen=0) {
+  uint16_t value =0;
   int16_t len;     // 文字列長
   int16_t pos =1;  // 文字位置
   int16_t index;   // 配列添え字
@@ -3331,9 +3450,172 @@ int16_t iasc() {
     cip++;
     if (getParam(pos,1,len,false)) return 0;
   }
-  value = str[pos-1];
+  if (flgZen) {
+    // 全角処理モード
+    int16_t tmpPos = 0;
+    int16_t i;
+    for (i = 0; i < len; i++) {      
+      if (pos == tmpPos+1)
+        break;
+      if (isZenkaku(str[i])) {
+        i++;  
+      }
+      tmpPos++;
+    }
+    if (pos != tmpPos+1) {
+      value = 0;
+    } else {
+      value = str[i];
+      if(isZenkaku(str[i])) {
+        value<<=8;
+        value+= str[i+1];
+      }
+    }
+  } else {
+    // 通常モード
+    value = str[pos-1];
+  }
   checkClose();
   return value;
+
+}
+
+// WLEN(文字列)
+// 全角文字列長取得
+int16_t iwlen(uint8_t flgZen=0) {
+  int16_t len;     // 文字列長
+  int16_t index;   // 配列添え字
+  uint8_t* str;    // 文字列先頭位置
+  int16_t wlen = 0;
+  int16_t pos = 0;
+  
+  if (checkOpen()) 
+    return 0;
+    
+  if ( *cip == I_VAR)  {
+    // 変数の場合
+     cip++;
+     str = v2realAddr(var[*cip]);
+     len = *str; // 文字列長の取得
+     str++;      // 文字列先頭
+     cip++;     
+  } else if ( *cip == I_ARRAY) {
+    // 配列変数の場合
+     cip++; 
+     if (getParam(index, 0, SIZE_ARRY-1, false)) return 0;
+     str = v2realAddr(arr[index]);
+     len = *str; // 文字列長の取得
+     str++;      // 文字列先頭
+  } else if ( *cip == I_STR) {
+    // 文字列定数の場合
+     cip++;  len = *cip; // 文字列長の取得
+     cip++;  str = cip;  // 文字列先頭の取得
+     cip+=len;
+  } else {
+    err = ERR_SYNTAX;
+  }
+  checkClose();
+  if (flgZen) {
+    // 文字列をスキャンし、長さを求める
+    while(pos < len) {
+      if (isZenkaku(*str)) {
+        str++;
+        pos++;  
+      }
+      wlen++;
+      str++;
+      pos++;
+    }  
+  } else {
+    wlen = len;
+  }
+  return wlen;
+}
+
+// WADR(SJISコード)関数
+int16_t iwadr() {
+  uint16_t value;
+  int16_t index;
+  uint16_t sjis;
+
+  if (checkOpen())  return 0;
+
+  // 引数SJISコードの取得
+  if (getParam(sjis,false)) return 0;
+
+  index = findcode(sjis);
+  if (index < 0) {
+    value = 0;
+  } else {
+    value = V_FNT2_TOP + (index<<3);
+  }
+  checkClose();
+  return value;
+}
+
+// 文字列入力関数
+// GETS(仮想アドレス[,リミット])
+// リミット:長さ
+//
+int16_t igets() {
+  int16_t vadr;                // 文字列格納仮想アドレス
+  int16_t maxlen =32;          // デフォルト最大入力文字数
+  int16_t value = -1;          // 文字格納仮想アドレス
+  uint8_t* adr;                // 文字列格納実アドレス
+  char* text;                  // 入力文字列先頭アドレス
+  int16_t  len;                // 入力文字列長
+  uint8_t rc;
+
+  // 引数の取得
+  if (checkOpen())  return 0;
+  if (getParam(vadr, 0, 32767, false )) return value; // 文字列格納仮想アドレス
+  if (*cip == I_COMMA) {
+     cip++;
+     if ( getParam(maxlen,  1,  SIZE_LINE, false) ) return value; // 入力モード
+  }
+
+  checkClose();
+  if (err) {
+    return value;
+  }
+
+  // 引数の整合性チェック
+  if (v2realAddr(vadr) == 0 || v2realAddr(vadr+maxlen) == 0) {
+     err = ERR_RANGE; return 0;
+  }
+  adr  = v2realAddr(vadr);
+
+  // 文字列の入力
+  rc = sc->editLine();
+  if (!rc) {
+    // 入力中断
+    adr[0] = 0; // 長さのセット
+    err = ERR_CTR_C;                  // エラー番号をセット
+    newline();
+    return value;
+  }
+  
+  text = (char*)sc->getText(); // スクリーンバッファからテキスト取得 
+  len = strlen(text);
+  if (len) {
+     if (len > maxlen)
+       len = maxlen;
+     strncpy((char*)&adr[1], text,len);
+     adr[1+len] = 0;
+     tlimR((char*)&adr[1]); //文末の余分空白文字の削除
+     len = strlen((char*)&adr[1]);   
+     if ( len> 0 && isZenkaku(adr[1+len-1])) {
+       // 最後の文字が全角1バイト目の場合は削除する
+       adr[1+len-1] = 0;
+       len--;
+     }
+  }
+  adr[0] = len; // 長さのセット 
+  adr[1+len] = 0;
+  
+  value = vadr;
+  newline();
+  return value; 
 }
 
 // PRINT handler
@@ -3362,6 +3644,8 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
 
     case I_CHR: // CHR$()関数
       cip++; ichr(devno); break; // CHR$()関数
+    case I_WCHR: // WCHR$()関数
+      cip++; iwchr(devno); break; // WCHR$()関数
 
      break;
 
@@ -3369,6 +3653,7 @@ void iprint(uint8_t devno=0,uint8_t nonewln=0) {
     case I_BIN:  cip++; ibin(devno); break; // BIN$()関数
     case I_DMP:  cip++; idmp(devno); break; // DMP$()関数
     case I_STRREF:cip++; istrref(devno); break; // STR$()関数
+    case I_WSTR:cip++; iwstr(devno); break; // WSTR$()関数
     case I_ELSE:        // ELSE文がある場合は打ち切る
        newline(devno);
        return;
@@ -3474,13 +3759,16 @@ void iaccel() {
   }
 }
 
-// ターミナルスクリーンの画面サイズ指定 WIDTH W,H
+// ターミナルスクリーンの画面サイズ指定 WIDTH W [,H]
 void iwidth() {
-  int16_t w, h;
+  int16_t w, h=sc->getHeight();
 
   // 引数チェック
-  if ( getParam(w,  16, SIZE_LINE, true) ) return;   // w
-  if ( getParam(h,  10,  30, false) ) return;        // h
+  if ( getParam(w,  16, SIZE_LINE, false) ) return;  // w
+  if (*cip == I_COMMA) {
+     cip++;
+     if ( getParam(h,  10,  30, false) ) return;     // h
+  }
 
   sc->cls();
   sc->locate(0,0);
@@ -3705,32 +3993,17 @@ int16_t ivalue() {
     value = iinkey(); // キー入力値の取得
     break;
 
-  case I_VPEEK: value = ivpeek();  break; //関数VPEEK
-  case I_GPEEK: value = igpeek();  break; //関数GPEEK(X,Y)
-  case I_GINP:  value = iginp();   break; //関数GINP(X,Y,W,H,C)
-  case I_MAP:   value = imap();    break; //関数MAP(V,L1,H1,L2,H2)
-  case I_ASC:   value = iasc();    break;// 関数ASC(文字列)
-  case I_GRADE: value = igrade();  break;// 関数GRADE(値,配列番号,配列データ数)
-
-  case I_LEN:  // 関数LEN(変数)
-    if (checkOpen()) break;
-    if ( *cip == I_VAR)  {
-      cip++;
-      value = *v2realAddr(var[*cip]);
-      cip++;
-    } else if ( *cip == I_ARRAY) {
-      cip++;
-      if (getParam(value, 0, SIZE_ARRY-1, false)) return 0;
-      value = *v2realAddr(arr[value]);
-    } else if ( *cip == I_STR) {
-      cip++;
-      value = *cip;
-      cip+=*cip+1;
-    } else
-      err = ERR_SYNTAX;
-    checkClose();
-    break;
-   
+  case I_VPEEK: value = ivpeek();  break; // 関数VPEEK
+  case I_GPEEK: value = igpeek();  break; // 関数GPEEK(X,Y)
+  case I_GINP:  value = iginp();   break; // 関数GINP(X,Y,W,H,C)
+  case I_MAP:   value = imap();    break; // 関数MAP(V,L1,H1,L2,H2)
+  case I_ASC:   value = iasc();    break; // 関数ASC(文字列)
+  case I_WASC:  value = iasc(1);   break; // 関数WASC(文字列)
+  case I_GRADE: value = igrade();  break; // 関数GRADE(値,配列番号,配列データ数)
+  case I_LEN:   value = iwlen() ;  break; // 関数WLEN(文字列)   
+  case I_WLEN:  value = iwlen(1) ; break; // 関数WLEN(文字列)
+  case I_WADR:  value = iwadr();   break; // 関数WADR(sjisコード)
+  case I_GETS:  value = igets();   break; // 関数GETS()  
   case I_TICK: // 関数TICK()
     if ((*cip == I_OPEN) && (*(cip + 1) == I_CLOSE)) {
       // 引数無し
@@ -3775,6 +4048,7 @@ int16_t ivalue() {
   case I_MEM:   value = V_MEM_TOP;   break; 
   case I_MFNT:  value = V_FNT_TOP;   break;
   case I_GRAM:  value = V_GRAM_TOP;  break;
+  case I_MFNT2: value = V_FNT2_TOP;  break;
   
   case I_DIN: // DIN(ピン番号)
     if (checkOpen()) break;
@@ -3804,13 +4078,21 @@ int16_t ivalue() {
   case I_GW: value = 0 ; break;
   case I_GH: value = 0 ; break;
 #endif
-  // カーソル・スクロール等の方向
+  // スクロール等の方向
   case I_UP:    value = 0   ; break;
   case I_DOWN:  value = 1   ; break;
   case I_RIGHT: value = 2   ; break;
   case I_LEFT:  value = 3   ; break;
   case I_TOP:   value = 4   ; break;
 
+  // キーボードコード
+  case I_KUP:    value = 0x1c   ; break;
+  case I_KDOWN:  value = 0x1d   ; break;
+  case I_KRIGHT: value = 0x1e   ; break;
+  case I_KLEFT:  value = 0x1f   ; break;
+  case I_KSPACE: value = 0x20   ; break;
+  case I_KENTER: value = 0x0d   ; break;
+  
    case I_BTNA: value = 5   ; break;
    case I_BTNB: value = 11   ; break;
   default: //以上のいずれにも該当しなかった場合
@@ -4486,6 +4768,9 @@ void basic() {
 
   // フォントをPCG領域にコピー
   copyFont2PCG();
+
+  // 美咲フォントの先頭アドレス取得
+  misaki_font = (uint8_t*)getFontTableAddress();
 
 #if USE_MATRIX == 1
  sc2.begin();

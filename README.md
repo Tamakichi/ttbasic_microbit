@@ -1,4 +1,4 @@
-# 豊四季Tiny Basic for micro:bit V0.06
+# 豊四季Tiny Basic for micro:bit V0.07
 
 「豊四季Tiny Basic for micro:bit」は、オリジナル版「TOYOSHIKI Tiny BASIC for Arduino」を  
 Arduino micro:bit向けに移植・機能拡張したプログラムです。  
@@ -12,13 +12,18 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 この条件のもとで、利用、複写、改編、再配布を認めます.  
 バイナリファイルのみの配布は行わないで下さい.  
 
-「豊四季Tiny Basic for micro:bit」のコマンドの使い方等は  
-リファレンス・マニュアル「Toyosiki Tiny BASIC for microbit V006.pdf」を参照して下さい。  
+**「豊四季Tiny Basic for micro:bit」のコマンドの使い方等は**  
+**リファレンス・マニュアル「Toyosiki Tiny BASIC for microbit V007.pdf」を参照して下さい。**  
 
 **修正内容**
 - ラインエディタ部の差し換え  
   オリジナルのラインエディタ部分をフルスリーンテキストエディタに差し換えました.  
-  ターミナル上で昔のBASICっぽい編集操作を出来るようにしました.  
+  ターミナル上で昔のBASICっぽい編集操作を出来るようにしました.    
+  (**new!**)日本語全角文字列（シフトJIS）が利用出来るようになりました.  
+  (**new!**)編集キー [F7]：行の分割、[F8]：行の結合を追加しました.    
+  (**new!**)美咲フォントの利用が可能になりました.  
+  (**new!**)V0.06版からカーソルキーのキーコードを変更しました (マニュアルを確認下さい)  
+  (**new!**)カーソルキーのコードはKUP、KDOWN、LRIGHT、KLEFTのが利用出来るようになりました。  
 
 - コマンドの追加  
   - **RENUM** ：行番号再割り当て  
@@ -82,8 +87,18 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
        - **SETTONE**  ピン番号：サウンド出力で利用するポートを設定する  
        - **PLAY** "MML文"  ： 指定したMML文（文字列）を演奏する。  
        - **TEMPO** テンポ  ： PLAY文の演奏テンポを設定する（デフォルト 120）  
+   - (**new!**)全角文字列を扱う関数、美咲フォント関連の追加  
+       - **WLEN(**文字列)：LEN()の全角文字列対応版.文字数をカウントする  
+       - **WASC**(文字列[,文字位置])：ASC()の全角対応版.文字コード(SJIS)を取得する  
+       - **WCHAR**`$`(SJISコード)：CHR`$`()の全角対応版.文字コードの文字を取得する  
+       - **WSTR**`$`(変数`[`,位置,文字数]`]`)：STR`$`()の全角対応版. 変数が参照している文字列を返す  
+       - **WADR**(SJISコード)：SJISコードで指定したフォントデータ格納アドレスを取得する  
+       - **FNT2**：定数 美咲フォントデータ格納先頭アドレス  
+       - **GETS**(仮想アドレス[,有効バイト数])：文字列入力関数.文字入力を行いその格納アドエスを返す.  
 
 - その他  
+  - (**new!**)V0.06の不具合対応  
+    - MATRIX OFFコマンド実行時にポートの初期化し忘れの対応  
   - V0.05の不具合対応  
     - RND(n)を0～n-1に修正  
     - LEDマトリックスの色指定コード2(反転)の対応  
@@ -112,19 +127,19 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 - その他  
   - プログラム領域を256バイトから4096バイトに拡大  
   - 配列サイズを32から100に拡大  
-  - 変数はA～Zの他に、A0..A6 ～ Z0..Z6の数字を付けた2桁も利用可能 
-  - リセット
-    -  ボタンAを５秒間押し続けた後、ボタンAを離す
-  - プログラムno.0の自動起動
-    - ボタンBを押しながら電源を入れるまたはリセットボタンでリセットする
-    - ボタンA、ボタンBを５秒間押し続けた後、ボタンAだけ離す
-
+  - 変数はA～Zの他に、A0..A6 ～ Z0..Z6の数字を付けた2桁も利用可能   
+  - リセット  
+    -  ボタンAを５秒間押し続けた後、ボタンAを離す  
+  - プログラムno.0の自動起動  
+    - ボタンBを押しながら電源を入れるまたはリセットボタンでリセットする  
+    - ボタンA、ボタンBを５秒間押し続けた後、ボタンAだけ離す  
 
 
 
 本プログラムは下記のライブラリを利用しています。  
-
-- mcursesライブラリ（組込済み）
+- misakiフォントライブラリSJIS版（組込済み）  
+  <https://github.com/Tamakichi/Arduino-misakiSJIS>  
+- mcursesライブラリ（組込済み）  
   <https://github.com/ChrisMicro/mcurses>  
 - Adafruit_microbit_Matrix （組込済み）(Adafruit_Microbit libraryを流用し改造)   
   https://github.com/adafruit/Adafruit_Microbit   
@@ -305,7 +320,7 @@ MSG TOP,0,"A"
 
 ### 時刻表示（Aボタンを押したら時刻を表示する）
 
-```
+```時刻表示（Aボタンを押したら時刻を表示する）
 1 'ﾄｹｲ
 10 MATRIX ON
 20 SETDATE 2018,1,16,12,0,0
@@ -316,6 +331,74 @@ MSG TOP,0,"A"
 70 GETTIME T1,T2,T3
 80 MSG LEFT,80,#-2,T1;":";T2;":";T3;" "
 90 RETURN
+```
+
+### (new!)美咲フォントデータの参照
+
+```
+1 '美咲フォントの利用
+10 S="あ"
+20 A=WADR(WASC(S))
+30 FOR Y=0 TO 7
+40 D=PEEK(A+Y)
+50 FOR X=0 TO 7
+60 IF D&($80>>X) ?"■"; ELSE ?"  ";
+70 NEXT X
+80 ?
+90 NEXT Y
+```
+
+### (new!)NeoPixcel（8x8マトリックス型）で文字表示
+
+```
+10 'NeoPixelで文字表示
+20 SETFONT 0,$50,$A8,$88,$88,$70
+30 MSG TOP,0,CHR$(0)
+40 NPBEGIN 12,64
+50 NPCLS
+60 S="こんにちは☆さい玉":C0=RGB8(0,2,3)
+70 FOR I=1 TO WLEN(S)
+80 A=WADR(WASC(S,I))
+90 FOR Y=0 TO 7
+100 D=PEEK(A+Y)
+110 FOR X=0 TO 7
+120 IF D&($80>>X) C=C0 ELSE C=0
+130 IF Y&1 POKE MEM+Y*8+X,C ELSE POKE MEM+Y*8+7-X,C
+140 NEXT X
+150 NEXT Y
+160 NPPUT 0,MEM,64,1
+170 WAIT 400
+180 NEXT I
+190 GOTO 70
+```
+
+### (new!)LEDマトリックスフォント作成ツール（後田さん作成）
+
+```
+1 'PCG EDIT
+5 ATTR 0:COLOR 7
+10 CLS:CLS 1:CLV:LET @(20)=79,42
+20 FOR I=0 TO 4:FOR J=0 TO 4
+30 LOCATE I,J:?CHR$(@(20));:NEXT J:NEXT I:GOSUB 500
+40 K=INKEY()
+50 X=X+(K=KRIGHT)*(X<4)-(K=KLEFT)*(X>0)
+60 Y=Y+(K=KDOWN)*(Y<4)-(K=KUP)*(Y>0)
+70 LOCATE X,Y:C=VPEEK(X,Y)
+75 ATTR 2:?CHR$(C):LOCATE X,Y:WAIT 100:ATTR 0:?CHR$(C):LOCATE X,Y
+80 IF K=32:IF C=@(20) P=@(21) ELSE IF C=@(21) P=@(20)
+90 IF K<>32 GOTO 40
+100 ?CHR$(P);
+110 FOR I=0 TO 4:D=0
+120 FOR J=0 TO 4:C=VPEEK(J,I)
+130 IF C=@(21) D=D+(1<<(7-J))
+140 NEXT J:@(I)=D
+150 NEXT I
+160 GOSUB 500:GOTO 40
+500 LOCATE 0,10:?"SETFONT ASC(";CHR$(34,90,34,41);
+510 FOR I=0 TO 4:?",$";HEX$(@(I),2);:NEXT I
+520 SETFONT ASC("Z"),@(0),@(1),@(2),@(3),@(4)
+530 MSG TOP,0,"Z"
+540 RETURN
 ```
 
 

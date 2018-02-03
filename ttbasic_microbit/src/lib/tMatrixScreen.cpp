@@ -2,6 +2,7 @@
 // file: tMatrixScreen.cpp
 // micro:bit LEDマトリックス制御クラス
 // 2017/12/28 作成
+// 2018/02/03 修正 ,driveMatrix()で停止時にポート26,27,28をLOWにセット
 //
 
 #include <string.h>
@@ -305,5 +306,8 @@ void tMatrixScreen::driveMatrix(uint8_t sw, uint8_t flgCls) {
     matrix.restartTimer();
   } else {    
     matrix.stopTimer();
+    digitalWrite(26,0);
+    digitalWrite(27,0);
+    digitalWrite(28,0);
   }
 }

@@ -59,7 +59,7 @@ void tTermscreen::WRITE(uint8_t x, uint8_t y, uint8_t c) {
   ::addch(c);
   ::move(pos_y, pos_x);
 }
-    
+
 void tTermscreen::CLEAR() {
   ::clear();
 }
@@ -121,10 +121,10 @@ uint8_t tTermscreen::isKeyIn() {
 uint8_t tTermscreen::get_ch() {
   uint8_t c = getch();
   switch (c) {
-    case KEY_F(1):c=SC_KEY_CTRL_L; break; 
-    case KEY_F(2):c=SC_KEY_CTRL_D; break;
-    case KEY_F(3):c=SC_KEY_CTRL_N; break;
-    case KEY_F(5):c=SC_KEY_CTRL_R; break;
+    case KEY_F1:c=SC_KEY_CTRL_L; break; 
+    case KEY_F2:c=SC_KEY_CTRL_D; break;
+    case KEY_F3:c=SC_KEY_CTRL_N; break;
+    case KEY_F5:c=SC_KEY_CTRL_R; break;
   }
   return c;
 }

@@ -14,6 +14,11 @@
  *---------------------------------------------------------------------------------------------------------------------------------------------------
  */
 
+//
+// 修正 2018/01/30 キーコードの変更（全角文字シフトJIS対応のため）
+//
+
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -138,6 +143,7 @@ void                     endwin (void);                                      // 
 #define KEY_BACKSPACE           '\b'                                                // Backspace key
 #define KEY_ESCAPE              0x1B                                                // ESCAPE (pressed twice)
 
+/*
 #define KEY_DOWN                0x80                                                // Down arrow key
 #define KEY_UP                  0x81                                                // Up arrow key
 #define KEY_LEFT                0x82                                                // Left arrow key
@@ -151,11 +157,37 @@ void                     endwin (void);                                      // 
 #define KEY_BTAB                0x8A                                                // Back tab key
 #define KEY_F1                  0x8B                                                // Function key F1
 #define KEY_F(n)                (KEY_F1+(n)-1)                                      // Space for additional 12 function keys
+*/
+#define KEY_UP                  0x1c                                                // Up arrow key
+#define KEY_DOWN                0x1d                                                // Down arrow key
+#define KEY_RIGHT               0x1e                                                // Right arrow key
+#define KEY_LEFT                0x1f                                                // Left arrow key
+#define KEY_HOME                0x01                                                // Home key
+#define KEY_DC                  0x02                                                // Delete character key
+#define KEY_IC                  0x05                                                // Ins char/toggle ins mode key
+#define KEY_NPAGE               0x10                                                // Next-page key
+#define KEY_PPAGE               0x11                                                // Previous-page key
+#define KEY_END                 0x0F                                                // End key
+#define KEY_BTAB                0x18                                                // Back tab key
+#define KEY_F1                  0x0c                                                // Function key F1
+#define KEY_F2                  0x04
+#define KEY_F3                  0x0e
+#define KEY_F4                  0x03
+#define KEY_F5                  0x12
+#define KEY_F6                  0x13
+#define KEY_F7                  0x14
+#define KEY_F8                  0x15
+#define KEY_F9                  0x16
+#define KEY_F10                 0x17
+#define KEY_F11                 0x18
+#define KEY_F12                 0x19  
+//#define KEY_F(n)                (KEY_F1+(n)-1)                                      // Space for additional 12 function keys
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------------
  * graphics: draw boxes
  *---------------------------------------------------------------------------------------------------------------------------------------------------
  */
+/*
 #define ACS_LRCORNER            0x8a                                                // DEC graphic 0x6a: lower right corner
 #define ACS_URCORNER            0x8b                                                // DEC graphic 0x6b: upper right corner
 #define ACS_ULCORNER            0x8c                                                // DEC graphic 0x6c: upper left corner
@@ -167,11 +199,12 @@ void                     endwin (void);                                      // 
 #define ACS_BTEE                0x96                                                // DEC graphic 0x76: bottom tee
 #define ACS_TTEE                0x97                                                // DEC graphic 0x77: top tee
 #define ACS_VLINE               0x98                                                // DEC graphic 0x78: vertical line
-
+*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------------
  * graphics: other symbols
  *---------------------------------------------------------------------------------------------------------------------------------------------------
  */
+/*
 #define ACS_DIAMOND             0x80                                                // DEC graphic 0x60: diamond
 #define ACS_CKBOARD             0x81                                                // DEC graphic 0x61: checker board
 #define ACS_DEGREE              0x86                                                // DEC graphic 0x66: degree symbol
@@ -188,7 +221,7 @@ void                     endwin (void);                                      // 
 #define ACS_NEQUAL              0x9c                                                // DEC graphic 0x7c: not equal
 #define ACS_STERLING            0x9d                                                // DEC graphic 0x7d: uk pound sign
 #define ACS_BULLET              0x9e                                                // DEC graphic 0x7e: bullet
-
+*/
 
 
 	
