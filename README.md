@@ -13,7 +13,7 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
 バイナリファイルのみの配布は行わないで下さい.  
 
 **「豊四季Tiny Basic for micro:bit」のコマンドの使い方等は**  
-**リファレンス・マニュアル「Toyosiki Tiny BASIC for microbit V007.pdf」を参照して下さい。**  
+**リファレンス・マニュアル「Toyosiki Tiny BASIC for microbit V008.pdf」を参照して下さい。**  
 
 **修正内容**
 - ラインエディタ部の差し換え  
@@ -23,13 +23,12 @@ Arduino micro:bit向けに移植・機能拡張したプログラムです。
   編集キー [F7]：行の分割、[F8]：行の結合を追加しました.    
   美咲フォントの利用が可能になりました.  
   V0.06版からカーソルキーのキーコードを変更しました (マニュアルを確認下さい)  
-  カーソルキーのコードはKUP、KDOWN、LRIGHT、KLEFTのが利用出来るようになりました。  
+  カーソルキーのコードKUP、KDOWN、LRIGHT、KLEFT追加   
   (**new!**)プログラム保存領域を8本から16本に増やしました。  
   (**new!**)UARTコマンドの追加。任意のピンにてシリアル通信が可能になりました。  
   (**new!**)CLINEコマンドの追加。文字による直線描画機能を追加しました。    
 
-
-**注意事項**
+**注意事項**  
 UARTコマンドの追加にあたり、Arduino micro:bitのコアモジュールのソースの一部を修正しています。 スケッチをコンパイルする場合はUart.hにARDUINO_GENERICの定義の追加が必要となります。  
 \AppData\Local\Arduino15\packages\sandeepmistry\hardware\nRF5\0.5.1\cores\nRF5\Uart.h  
 
@@ -43,7 +42,9 @@ UARTコマンドの追加にあたり、Arduino micro:bitのコアモジュー�
 ```
 
 - コマンドの追加  
-  - **RENUM** ：行番号再割り当て  
+ - (new!)**UART** ：指定ピンをシリアル通信(TxD、RxD)に利用する  
+ - (new!)**CLINE** ：文字による直線・矩形・塗りつぶし四角の描画   
+ - **RENUM** ：行番号再割り当て  
   - **CLS** ：画面クリア  
   - **LOCATE**：カーソル移動  
   - **COLOR**： 文字色の指定  
