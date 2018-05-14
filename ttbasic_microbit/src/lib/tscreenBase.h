@@ -5,14 +5,15 @@
 // 修正日 2017/10/15 定義競合のためKEY_F1、KEY_F(n)をKEY_Fn1、KEY_Fn(n)変更
 // 修正日 2018/01/30 制御キーのキーコード変更、全角（シフトJIS)対応
 // 修正日 2018/02/02 editLine()の追加
+// 修正日 2018/02/10, 基底クラスtSerialDevの廃止対応
 
 #ifndef __tscreenBase_h__
 #define __tscreenBase_h__
 
 #define DEPEND_TTBASIC           1     // 豊四季TinyBASIC依存部利用の有無 0:利用しない 1:利用する
+#define USE_EDITLINE             1     // 行編集関数editLineの利用  0:利用しない 1:利用する     
 
 #include <Arduino.h>
-#include "tSerialDev.h"
 
 // 編集キーの定義
 #define SC_KEY_TAB       '\t'   // [TAB] key
@@ -55,7 +56,7 @@
 #define VPEEK(X,Y)      (screen[width*(Y)+(X)])
 #define VPOKE(X,Y,C)    (screen[width*(Y)+(X)]=C)
 
-class tscreenBase : public tSerialDev {
+class tscreenBase  {
   protected:
     uint8_t* screen;            // スクリーン用バッファ
     uint16_t width;             // スクリーン横サイズ
@@ -69,7 +70,7 @@ class tscreenBase : public tSerialDev {
     uint8_t flgCur;             // カーソル表示設定
     uint8_t flgExtMem;          // 外部確保メモリ利用フラグ
 	
-protected:
+  public:
     virtual void INIT_DEV() =0;                              // デバイスの初期化
 	  virtual void END_DEV() {};                               // デバイスの終了
     virtual void MOVE(uint8_t y, uint8_t x) =0;              // キャラクタカーソル移動
@@ -97,8 +98,6 @@ protected:
 	  virtual void setColor(uint16_t fc, uint16_t bc) =0;  // 文字色指定
   	virtual void setAttr(uint16_t attr) =0;              // 文字属性
 	  virtual void set_allowCtrl(uint8_t flg) {};          // シリアルからの入力制御許可設定
-
-	//virtual int16_t peek_ch();                           // キー入力チェック(文字参照)
     virtual uint8_t IS_PRINT(uint8_t ch) {
       //return (((ch) >= 32 && (ch) < 0x7F) || ((ch) >= 0xA0)); 
      return ch;
@@ -145,9 +144,11 @@ protected:
     void splitLine();                           // カーソル位置で行を分割する
     void margeLine();                           // 現在行の末尾に次の行を結合する
     void deleteLine(uint16_t l);                // 指定行を削除
+#if USE_EDITLINE == 1
     virtual uint8_t editLine();                 // ライン編集
-    
-};
+#endif
+ };
+
 
 #endif
 

@@ -1,44 +1,27 @@
 //
 // file:tTermscreen.cpp
-// ターミナルスクリーン制御ライブラリ for Arduino STM32
+// ターミナルスクリーン制御ライブラリ 
 //  V1.0 作成日 2017/03/22 by たま吉さん
 //  修正日 2017/03/26, 色制御関連関数の追加
 //  修正日 2017/03/30, moveLineEnd()の追加,[HOME],[END]の編集キーの仕様変更
 //  修正日 2017/06/27, 汎用化のための修正
+//  修正日 2018/02/10, 基底クラスtSerialDevの廃止対応
 //
 
 #include <string.h>
 #include "tTermscreen.h"
 
 //******* mcurses用フック関数の定義(開始)  *****************************************
-static tTermscreen* tsc = NULL;
 
 // シリアル経由1文字出力
-
 static void Arduino_putchar(uint8_t c) {
-  if (tsc->getSerialMode() == 0)
-    Serial.write(c);
-#if 0
-  else if (tsc->getSerialMode() == 1)
-	Serial1.write(c);
-#endif
+  Serial.write(c);
 }
 
 // シリアル経由1文字入力
 static char Arduino_getchar() {
-  if (tsc->getSerialMode() == 0) {
-    while (!Serial.available());
-    return Serial.read();
-  }
-#if 0
-  else if (tsc->getSerialMode() == 1) {
-    while (!Serial1.available());
-    return Serial1.read();    
-  } else {
-    while (!Serial.available());
-    return Serial.read();    
-  }
-#endif
+  while (!Serial.available());
+  return Serial.read();
 }
 //******* mcurses用フック関数の定義(終了)  *****************************************
 
@@ -60,25 +43,6 @@ void tTermscreen::WRITE(uint8_t x, uint8_t y, uint8_t c) {
   ::move(pos_y, pos_x);
 }
 
-void tTermscreen::CLEAR() {
-  ::clear();
-}
-
-// 行の消去
-void tTermscreen::CLEAR_LINE(uint8_t l) {
-  ::move(l,0);  ::clrtoeol();  // 依存関数
-}
-
-// スクロールアップ
-void tTermscreen::SCROLL_UP() {
-  ::scroll();
-}
-
-// スクロールダウン
-void tTermscreen::SCROLL_DOWN() {
-  INSLINE(0);
-}
-
 // 指定行に1行挿入(下スクロール)
 void tTermscreen::INSLINE(uint8_t l) {
   ::move(l,0);
@@ -94,62 +58,20 @@ void tTermscreen::INIT_DEV() {
   ::setFunction_getchar(Arduino_getchar);  // 依存関数
   ::initscr();                             // 依存関数
   ::setscrreg(0,height-1);
-  serialMode = 0;
-  tsc = this;
 }
 
 // キー入力チェック
 uint8_t tTermscreen::isKeyIn() {
- if(serialMode == 0) {
-    if (Serial.available())
-       return get_ch();
-    else
-       return 0;
-  }
-#if 0
- else if (serialMode == 1) {
-	if (Serial1.available())
-       return get_ch();
-    else
-       return 0;
-	}
-#endif
- return 0;
-}
-
-// 文字入力
-uint8_t tTermscreen::get_ch() {
-  uint8_t c = getch();
-  switch (c) {
-    case KEY_F1:c=SC_KEY_CTRL_L; break; 
-    case KEY_F2:c=SC_KEY_CTRL_D; break;
-    case KEY_F3:c=SC_KEY_CTRL_N; break;
-    case KEY_F5:c=SC_KEY_CTRL_R; break;
-  }
-  return c;
-}
-
-// キー入力チェック(文字参照)
-int16_t tTermscreen::peek_ch() {
- if(serialMode == 0)
-    return Serial.peek();
-#if 0
- if(serialMode == 1)
-    return Serial1.peek();
-#endif
- return 0;
+  if (Serial.available())
+     return get_ch();
+  return 0;
 }
 
 // カーソルの表示/非表示
 // flg: カーソル非表示 0、表示 1、強調表示 2
 void tTermscreen::show_curs(uint8_t flg) {
-    flgCur = flg;
-    ::curs_set(flg);  // 依存関数
-}
-
-// カーソルの消去
-void tTermscreen::draw_cls_curs() {  
-
+  flgCur = flg;
+  ::curs_set(flg);  // 依存関数
 }
 
 // 文字色指定

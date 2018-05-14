@@ -7,8 +7,6 @@
 
 #include <string.h>
 #include "tMatrixScreen.h"
-//#include <Fonts/TomThumb.h>
-//extern const unsigned char font5x5tt[];
 extern const uint8_t* ttbasic_font;
 #ifndef swap
 #define swap(a, b) { int16_t t = a; a = b; b = t; }
@@ -26,7 +24,6 @@ __attribute__((always_inline)) uint8_t* tMatrixScreen::getGRAM() {
 
 boolean tMatrixScreen::begin(void) {
   fontEx   = 1;                // フォント拡大率
- // font = (uint8_t*)font5x5tt;  // フォン
   font = (uint8_t*)ttbasic_font;  // フォン
   f_width  = *(font+0)*fontEx; // 横フォントドット数
   f_height = *(font+1)*fontEx; // 縦フォントドット数
@@ -38,8 +35,6 @@ boolean tMatrixScreen::begin(void) {
   pos_gy   = 0;     // グラフィックカーソル
 
   matrix.begin();
-  //matrix.setFont(&TomThumb);
-  //matrix.setTextWrap(false);
   matrix.setTextColor(LED_ON);
   return true;
 }
@@ -53,18 +48,9 @@ void tMatrixScreen::set_gcursor(int16_t x, int16_t y) {
 
 // グラフィック文字表示
 void  tMatrixScreen::gputch(uint8_t c) {
-
   drawBitmap_x2( this->pos_gx, this->pos_gy, this->font+3+((uint16_t)c)*f_height,
     	           this->f_width/ this->fontEx,  this->f_height/this->fontEx,  this->fgcolor, this->fontEx,1);
-  //Serial.print("[DEBUG]:gputch font=");
-  //Serial.println((uint32_t)this->font+3+((uint16_t)c)*5,HEX);
   this->pos_gx += this->f_width;
-/*
-  if (this->pos_gx + this->f_width >= this->g_width) {
-     this->pos_gx = 0;
-     this->pos_gy += this->f_height;
-  }
-*/
 }
 
 
@@ -160,19 +146,6 @@ int16_t tMatrixScreen::ginp(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t 
   }
   return 0;	
 }
-
-// キャラクタ画面スクロール
-// x: スクロール開始位置 x
-// y: スクロール開始位置 y
-// w: スクロール幅
-// h: スクロール高さ
-// d:方向
-/*
-void tMatrixScreen::cscroll(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t d) {
-  tGraphicScreen::cscroll(x, y, w,h,d);
-  //this->matrix.display();
-}
-*/
 
 // グラフィックスクロール(横向き起点)
 // x: スクロール開始位置 x (1ドット単位)

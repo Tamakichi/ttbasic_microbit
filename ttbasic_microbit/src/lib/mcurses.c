@@ -16,6 +16,8 @@
 
 //
 // 修正 2018/01/30 キーコードの変更（全角文字シフトJIS対応のため）
+// 修正 2018/02/14 Arduino(AVR)用SRAM利用消費軽減対応
+// 修正 2018/05/07 Arduino(AVR)以外の環境への対応‘
 //
 
 #include <stdio.h>
@@ -28,6 +30,8 @@
 	#define PROGMEM
 	#define PSTR(x)                                 (x)
 	#define pgm_read_byte(s)                        (*s)
+	#define pgm_read_word(s)                        (*s)
+	#define strcmp_P(a, b)                          strcmp((a), (b))
 #endif 
 
 #include "mcurses.h"
@@ -195,25 +199,7 @@ mcurses_addch_or_insch (uint_fast8_t ch, uint_fast8_t insert)
 {
     static uint_fast8_t  charset = 0xff;
     static uint_fast8_t  insert_mode = FALSE;
-/* 2017/08/24 
-    if (ch >= 0x80 && ch <= 0x9F)
-    {
-        if (charset != CHARSET_G1)
-        {
-            mcurses_putc ('\016');                                              // switch to G1 set
-            charset = CHARSET_G1;
-        }
-        ch -= 0x20;                                                             // subtract offset to G1 characters
-    }
-    else
-    {
-        if (charset != CHARSET_G0)
-        {
-            mcurses_putc ('\017');                                              // switch to G0 set
-            charset = CHARSET_G0;
-        }
-    }
-*/
+
     if (insert)
     {
         if (! insert_mode)
@@ -561,37 +547,46 @@ halfdelay (uint_fast8_t tenths)
  * MCURSES: read key
  *---------------------------------------------------------------------------------------------------------------------------------------------------
  */
-//#define MAX_KEYS                ((KEY_F1 + 12) - 0x80)
-#define MAX_KEYS                (23)
-static const struct function_keys_type {
-  char* str;
-  uint8_t code;
-} function_keys[MAX_KEYS] = {
-  { "B",   KEY_DOWN   },                // Down arrow key
-  { "A",   KEY_UP     },                // Up arrow key
-  { "D",   KEY_LEFT   },                // Left arrow key
-  { "C",   KEY_RIGHT  },                // Right arrow key
-  { "1~",  KEY_HOME   },               // Home key
-  { "3~",  KEY_DC     },               // Delete character key
-  { "2~",  KEY_IC     },               // Ins char/toggle ins mode key
-  { "6~",  KEY_NPAGE  },               // Next-page key
-  { "5~",  KEY_PPAGE  },               // Previous-page key
-  { "4~",  KEY_END    },               // End key
-  { "Z",   KEY_BTAB   },               // Back tab key
-  { "11~", KEY_F1     },               // Function key F1
-  { "12~", KEY_F2     },               // Function key F2
-  { "13~", KEY_F3     },               // Function key F3
-  { "14~", KEY_F4     },               // Function key F4
-  { "15~", KEY_F5     },               // Function key F5
-  { "17~", KEY_F6     },               // Function key F6
-  { "18~", KEY_F7     },               // Function key F7
-  { "19~", KEY_F8     },               // Function key F8
-  { "20~", KEY_F9     },               // Function key F9
-  { "21~", KEY_F10    },               // Function key F10
-  { "23~", KEY_F11    },               // Function key F11
-  { "24~", KEY_F12    },               // Function key F12
+
+#define MAX_KEYS    (23)
+#define KW(k,s) const char k[] PROGMEM=s  // キーワード定義マクロ
+KW(k00,"B");  KW(k01,"A");  KW(k02,"D");  KW(k03,"C");  KW(k04,"1~"); 
+KW(k05,"3~"); KW(k06,"2~"); KW(k07,"6~"); KW(k08,"5~"); KW(k09,"4~");
+KW(k10,"Z");  KW(k11,"11~");KW(k12,"12~");KW(k13,"13~");KW(k14,"14~");
+KW(k15,"15~");KW(k16,"17~");KW(k17,"18~");KW(k18,"19~");KW(k19,"20~");
+KW(k20,"21~");KW(k21,"23~");KW(k22,"24~");
+
+const char* const function_keys[] PROGMEM = {
+  k00,k01,k02,k03,k04,k05,k06,k07,k08,k09,
+  k10,k11,k12,k13,k14,k15,k16,k17,k18,k19,
+  k20,k21,k22,
 };
 
+const char const function_keys_code[] PROGMEM = {
+  KEY_DOWN   ,                // Down arrow key
+  KEY_UP     ,                // Up arrow key
+  KEY_LEFT   ,                // Left arrow key
+  KEY_RIGHT  ,                // Right arrow key
+  KEY_HOME   ,               // Home key
+  KEY_DC     ,               // Delete character key
+  KEY_IC     ,               // Ins char/toggle ins mode key
+  KEY_NPAGE  ,               // Next-page key
+  KEY_PPAGE  ,               // Previous-page key
+  KEY_END    ,               // End key
+  KEY_BTAB   ,               // Back tab key
+  KEY_F1     ,               // Function key F1
+  KEY_F2     ,               // Function key F2
+  KEY_F3     ,               // Function key F3
+  KEY_F4     ,               // Function key F4
+  KEY_F5     ,               // Function key F5
+  KEY_F6     ,               // Function key F6
+  KEY_F7     ,               // Function key F7
+  KEY_F8     ,               // Function key F8
+  KEY_F9     ,               // Function key F9
+  KEY_F10    ,               // Function key F10
+  KEY_F11    ,               // Function key F11
+  KEY_F12    ,               // Function key F12
+};
 
 uint_fast8_t
 getch (void) {
@@ -626,12 +621,9 @@ getch (void) {
             buf[idx] = '\0';
 
             for (idx = 0; idx < MAX_KEYS; idx++)  {
-                if (! strcmp (buf, function_keys[idx].str))   {
-                    //ch = idx + 0x80;
-//<-- 変更
-                  ch = function_keys[idx].code;
+               if (!strcmp_P(buf,(char*)pgm_read_word(&function_keys[idx])))   {
+                  ch = pgm_read_byte(&function_keys_code[idx]);
                   break;
-//-->
                 }
             }
 

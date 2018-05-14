@@ -16,6 +16,7 @@
 
 //
 // 修正 2018/01/30 キーコードの変更（全角文字シフトJIS対応のため）
+// 修正 2018/03/01 CTRLキー定義の追加
 //
 
 
@@ -143,21 +144,6 @@ void                     endwin (void);                                      // 
 #define KEY_BACKSPACE           '\b'                                                // Backspace key
 #define KEY_ESCAPE              0x1B                                                // ESCAPE (pressed twice)
 
-/*
-#define KEY_DOWN                0x80                                                // Down arrow key
-#define KEY_UP                  0x81                                                // Up arrow key
-#define KEY_LEFT                0x82                                                // Left arrow key
-#define KEY_RIGHT               0x83                                                // Right arrow key
-#define KEY_HOME                0x84                                                // Home key
-#define KEY_DC                  0x85                                                // Delete character key
-#define KEY_IC                  0x86                                                // Ins char/toggle ins mode key
-#define KEY_NPAGE               0x87                                                // Next-page key
-#define KEY_PPAGE               0x88                                                // Previous-page key
-#define KEY_END                 0x89                                                // End key
-#define KEY_BTAB                0x8A                                                // Back tab key
-#define KEY_F1                  0x8B                                                // Function key F1
-#define KEY_F(n)                (KEY_F1+(n)-1)                                      // Space for additional 12 function keys
-*/
 #define KEY_UP                  0x1c                                                // Up arrow key
 #define KEY_DOWN                0x1d                                                // Down arrow key
 #define KEY_RIGHT               0x1e                                                // Right arrow key
@@ -181,25 +167,32 @@ void                     endwin (void);                                      // 
 #define KEY_F10                 0x17
 #define KEY_F11                 0x18
 #define KEY_F12                 0x19  
-//#define KEY_F(n)                (KEY_F1+(n)-1)                                      // Space for additional 12 function keys
 
+// CTRL KEYs
+#define KEY_CTRL_L 0x0c
+#define KEY_CTRL_R 0x12
+#define KEY_CTRL_X   24
+#define KEY_CTRL_C    3
+#define KEY_CTRL_D    4
+#define KEY_CTRL_N 0x0e
+  
 /*---------------------------------------------------------------------------------------------------------------------------------------------------
  * graphics: draw boxes
  *---------------------------------------------------------------------------------------------------------------------------------------------------
  */
-/*
-#define ACS_LRCORNER            0x8a                                                // DEC graphic 0x6a: lower right corner
-#define ACS_URCORNER            0x8b                                                // DEC graphic 0x6b: upper right corner
-#define ACS_ULCORNER            0x8c                                                // DEC graphic 0x6c: upper left corner
-#define ACS_LLCORNER            0x8d                                                // DEC graphic 0x6d: lower left corner
-#define ACS_PLUS                0x8e                                                // DEC graphic 0x6e: crossing lines
-#define ACS_HLINE               0x91                                                // DEC graphic 0x71: horizontal line
-#define ACS_LTEE                0x94                                                // DEC graphic 0x74: left tee
-#define ACS_RTEE                0x95                                                // DEC graphic 0x75: right tee
-#define ACS_BTEE                0x96                                                // DEC graphic 0x76: bottom tee
-#define ACS_TTEE                0x97                                                // DEC graphic 0x77: top tee
-#define ACS_VLINE               0x98                                                // DEC graphic 0x78: vertical line
-*/
+
+#define ACS_LRCORNER            '+'                                                // DEC graphic 0x6a: lower right corner
+#define ACS_URCORNER            '+'                                                // DEC graphic 0x6b: upper right corner
+#define ACS_ULCORNER            '+'                                                // DEC graphic 0x6c: upper left corner
+#define ACS_LLCORNER            '+'                                                // DEC graphic 0x6d: lower left corner
+#define ACS_PLUS                '+'                                                // DEC graphic 0x6e: crossing lines
+#define ACS_HLINE               '-'                                                // DEC graphic 0x71: horizontal line
+#define ACS_LTEE                '+'                                                // DEC graphic 0x74: left tee
+#define ACS_RTEE                '+'                                                // DEC graphic 0x75: right tee
+#define ACS_BTEE                '+'                                                // DEC graphic 0x76: bottom tee
+#define ACS_TTEE                '+'                                                // DEC graphic 0x77: top tee
+#define ACS_VLINE               '|'                                                // DEC graphic 0x78: vertical line
+  
 /*---------------------------------------------------------------------------------------------------------------------------------------------------
  * graphics: other symbols
  *---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -222,8 +215,6 @@ void                     endwin (void);                                      // 
 #define ACS_STERLING            0x9d                                                // DEC graphic 0x7d: uk pound sign
 #define ACS_BULLET              0x9e                                                // DEC graphic 0x7e: bullet
 */
-
-
 	
 	#endif // __MCURSES__
 
